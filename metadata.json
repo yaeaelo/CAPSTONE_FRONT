@@ -1,0 +1,8 @@
+{
+  "name": "BeatsCloud",
+  "description": "Plataforma de música para artistas y productores independientes donde compartir, reproducir y comercializar instrumentales y beats.",
+  "requestFrame": "none",
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
