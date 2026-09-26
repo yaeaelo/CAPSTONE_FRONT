@@ -19,6 +19,7 @@ import {
 
 interface ProducerProfilePageProps {
   producerId?: string;
+  initialTab?: 'beats' | 'suscripciones' | 'ventas';
   onOpenTrackDetail: (trackId: string) => void;
   onOpenUploadModal: () => void;
   onEditTrack: (track: Track) => void;
@@ -26,6 +27,7 @@ interface ProducerProfilePageProps {
 
 export const ProducerProfilePage: React.FC<ProducerProfilePageProps> = ({
   producerId,
+  initialTab = 'beats',
   onOpenTrackDetail,
   onOpenUploadModal,
   onEditTrack,
@@ -44,7 +46,7 @@ export const ProducerProfilePage: React.FC<ProducerProfilePageProps> = ({
     updateProfile,
   } = useApp();
 
-  const [activeTab, setActiveTab] = useState<'beats' | 'suscripciones' | 'ventas'>('beats');
+  const [activeTab, setActiveTab] = useState<'beats' | 'suscripciones' | 'ventas'>(initialTab);
   const [isEditingBio, setIsEditingBio] = useState(false);
   const [editedBio, setEditedBio] = useState('');
   const [subSuccess, setSubSuccess] = useState<string | null>(null);

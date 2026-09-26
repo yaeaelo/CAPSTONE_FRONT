@@ -1,7 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
-import { Track, MusicGenre } from '../types';
-import { X, Upload, Music, Sparkles } from 'lucide-react';
+import { Track, MusicGenre, ResourceType, MoodType } from '../types';
+import { getResourceBadgeInfo, RESOURCE_TYPES } from '../utils/resourceHelpers';
+import { analyzeAudioFile, AudioAnalysisResult } from '../utils/audioAnalyzer';
+import {
+  X,
+  Upload,
+  Sparkles,
+  Music,
+  Sliders,
+  Check,
+  Disc,
+  FileAudio,
+  Activity,
+  Layers,
+  HelpCircle,
+  AlertCircle,
+} from 'lucide-react';
 
 interface UploadTrackModalProps {
   isOpen: boolean;
@@ -13,9 +28,35 @@ const PRESET_COVERS = [
   'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600&auto=format&fit=crop&q=80',
   'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop&q=80',
   'https://images.unsplash.com/photo-1511192336575-5a79af67a629?w=600&auto=format&fit=crop&q=80',
+  'https://images.unsplash.com/photo-1465847899084-d164df4dedc6?w=600&auto=format&fit=crop&q=80',
+  'https://images.unsplash.com/photo-1516280440614-37939bbacd81?w=600&auto=format&fit=crop&q=80',
+  'https://images.unsplash.com/photo-1519683109079-d5f539e1542f?w=600&auto=format&fit=crop&q=80',
   'https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=600&auto=format&fit=crop&q=80',
   'https://images.unsplash.com/photo-1498038432885-c6f3f1b912ee?w=600&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=600&auto=format&fit=crop&q=80',
+];
+
+const SCALES = [
+  'A Minor', 'A Major',
+  'Bb Minor', 'Bb Major',
+  'B Minor', 'B Major',
+  'C Minor', 'C Major',
+  'C# Minor', 'C# Major',
+  'D Minor', 'D Major',
+  'Eb Minor', 'Eb Major',
+  'E Minor', 'E Major',
+  'F Minor', 'F Major',
+  'F# Minor', 'F# Major',
+  'G Minor', 'G Major',
+  'Ab Minor', 'Ab Major'
+];
+
+const MOODS: MoodType[] = [
+  'Oscuro',
+  'Enérgico',
+  'Chill / Relax',
+  'Triste / Nostálgico',
+  'Bailable',
+  'Agresivo',
 ];
 
 export const UploadTrackModal: React.FC<UploadTrackModalProps> = ({
@@ -26,229 +67,533 @@ export const UploadTrackModal: React.FC<UploadTrackModalProps> = ({
   const { uploadTrack, updateTrack } = useApp();
 
   const [title, setTitle] = useState('');
-  const [genre, setGenre] = useState<MusicGenre>('Hip-Hop');
+  const [resourceType, setResourceType] = useState<ResourceType>('instrumental');
+  const [genre, setGenre] = useState<MusicGenre>('Trap');
+  const [subgenre, setSubgenre] = useState('Dark Latin Trap');
   const [price, setPrice] = useState<number>(18000);
   const [description, setDescription] = useState('');
-  const [bpm, setBpm] = useState<number>(130);
-  const [scaleKey, setScaleKey] = useState('C Minor');
+  const [bpm, setBpm] = useState<number>(140);
+  const [scaleKey, setScaleKey] = useState('A Minor');
+  const [mood, setMood] = useState<MoodType>('Oscuro');
   const [audioBeatType, setAudioBeatType] = useState<Track['audioBeatType']>('trap');
   const [coverUrl, setCoverUrl] = useState(PRESET_COVERS[0]);
+
+  // Stems checkboxes
+  const [hasWav, setHasWav] = useState(true);
+  const [hasStems, setHasStems] = useState(true);
+  const [hasMidi, setHasMidi] = useState(false);
+  const [isFree, setIsFree] = useState(false);
+  const [hasWatermark, setHasWatermark] = useState(true);
+
+  // Fallback Audio Analyzer State
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisResult, setAnalysisResult] = useState<AudioAnalysisResult | null>(null);
+  const [fileNameInput, setFileNameInput] = useState('');
 
   useEffect(() => {
     if (trackToEdit) {
       setTitle(trackToEdit.title);
+      setResourceType(trackToEdit.resourceType || 'instrumental');
       setGenre(trackToEdit.genre);
+      setSubgenre(trackToEdit.subgenre || '');
       setPrice(trackToEdit.price);
       setDescription(trackToEdit.description);
       setBpm(trackToEdit.bpm);
       setScaleKey(trackToEdit.scaleKey);
+      setMood(trackToEdit.mood || 'Oscuro');
       setAudioBeatType(trackToEdit.audioBeatType);
       setCoverUrl(trackToEdit.coverUrl);
+      setHasWav(trackToEdit.hasWav);
+      setHasStems(trackToEdit.hasStems);
+      setHasMidi(trackToEdit.hasMidi);
+      setIsFree(trackToEdit.isFree ?? trackToEdit.price === 0);
+      setHasWatermark(trackToEdit.hasWatermark ?? true);
     } else {
       setTitle('');
-      setGenre('Hip-Hop');
+      setResourceType('instrumental');
+      setGenre('Trap');
+      setSubgenre('Dark Latin Trap');
       setPrice(18000);
       setDescription('');
-      setBpm(130);
-      setScaleKey('C Minor');
+      setBpm(140);
+      setScaleKey('A Minor');
+      setMood('Oscuro');
       setAudioBeatType('trap');
       setCoverUrl(PRESET_COVERS[0]);
+      setHasWav(true);
+      setHasStems(true);
+      setHasMidi(false);
+      setIsFree(false);
+      setHasWatermark(true);
+      setAnalysisResult(null);
+      setFileNameInput('');
     }
   }, [trackToEdit, isOpen]);
 
   if (!isOpen) return null;
 
+  // Run the fallback audio analyzer
+  const handleRunAnalyzer = async () => {
+    setIsAnalyzing(true);
+    try {
+      const name = fileNameInput.trim() || title.trim() || `${genre}_track_${bpm}bpm_${scaleKey}.wav`;
+      const result = await analyzeAudioFile(name);
+      setAnalysisResult(result);
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const handleApplyAnalysis = () => {
+    if (!analysisResult) return;
+    setBpm(analysisResult.detectedBpm);
+    setScaleKey(analysisResult.detectedKey);
+    setResourceType(analysisResult.detectedType);
+    setMood(analysisResult.detectedMood);
+    setGenre(analysisResult.suggestedGenre);
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim()) return;
 
+    const finalPrice = isFree ? 0 : price;
+
     if (trackToEdit) {
       updateTrack(trackToEdit.id, {
         title,
+        resourceType,
         genre,
-        price,
+        subgenre,
+        price: finalPrice,
         description,
         bpm,
         scaleKey,
+        mood,
         audioBeatType,
         coverUrl,
+        hasWav,
+        hasStems,
+        hasMidi,
+        isFree,
+        allowFreeDownload: isFree,
+        hasWatermark,
       });
     } else {
       uploadTrack({
         title,
+        resourceType,
         genre,
-        price,
+        subgenre,
+        price: finalPrice,
         description,
         bpm,
         scaleKey,
+        mood,
         audioBeatType,
         coverUrl,
+        hasWav,
+        hasStems,
+        hasMidi,
+        isFree,
+        allowFreeDownload: isFree,
+        hasWatermark,
       });
     }
 
     onClose();
   };
 
+  const badgeInfo = getResourceBadgeInfo(resourceType);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
-      <div className="relative w-full max-w-2xl bg-[#14151e] border border-zinc-700 rounded-3xl p-6 sm:p-8 shadow-2xl overflow-y-auto max-h-[90vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-150">
+      <div className="relative w-full max-w-3xl bg-[#0e111a] border border-[#1f2538] rounded-3xl p-6 sm:p-8 shadow-2xl overflow-y-auto max-h-[92vh]">
+        {/* Close Button */}
         <button
           onClick={onClose}
-          className="absolute top-5 right-5 text-zinc-400 hover:text-white p-2 rounded-full hover:bg-zinc-800"
+          className="absolute top-5 right-5 text-zinc-400 hover:text-white p-2 rounded-full hover:bg-zinc-800 transition-colors"
         >
           <X className="w-5 h-5" />
         </button>
 
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-10 h-10 rounded-xl bg-amber-400 text-zinc-950 font-black flex items-center justify-center shadow-lg shadow-amber-400/20">
-            <Upload className="w-5 h-5" />
+        {/* Modal Header */}
+        <div className="flex items-center gap-3.5 mb-6">
+          <div className="w-11 h-11 rounded-2xl bg-amber-400 text-zinc-950 font-black flex items-center justify-center shadow-lg shadow-amber-400/20">
+            <Upload className="w-6 h-6 stroke-[2.5]" />
           </div>
           <div>
             <h2 className="text-xl font-black text-white">
-              {trackToEdit ? 'Editar Instrumental' : 'Publicar Nuevo Beat'}
+              {trackToEdit ? 'Editar Pista de Audio' : 'Subir Archivo de Audio'}
             </h2>
             <p className="text-xs text-zinc-400">
-              Configura los detalles de tu producción y fija tu precio en pesos chilenos
+              Especifica los detalles técnicos del audio para facilitar la búsqueda precisa de los artistas.
             </p>
           </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        {/* Fallback Audio Detection System Card */}
+        <div className="mb-6 p-4 rounded-2xl bg-[#141824] border border-[#232a40] space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                <Activity className="w-3.5 h-3.5" />
+                <span>Sistema de Reconocimiento Acústico (Fallback)</span>
+              </span>
+              <p className="text-xs text-zinc-300 mt-0.5">
+                ¿No estás seguro del tempo o la tonalidad? El analizador extrae transientes y frecuencias armónicas automáticamente.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleRunAnalyzer}
+              disabled={isAnalyzing}
+              className="bg-zinc-800 hover:bg-zinc-700 text-amber-400 font-bold px-3.5 py-2 rounded-xl text-xs border border-amber-400/30 flex items-center justify-center gap-2 transition-all flex-shrink-0 disabled:opacity-50"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+              <span>{isAnalyzing ? 'Analizando Audio...' : '⚡ Auto-Detectar'}</span>
+            </button>
+          </div>
+
+          {/* Analysis Result Banner */}
+          {analysisResult && (
+            <div className="mt-3 p-3 rounded-xl bg-amber-400/10 border border-amber-400/30 text-xs animate-in fade-in duration-200">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-2 font-mono">
+                <span className="text-amber-300 font-bold">
+                  ✓ Análisis completado ({analysisResult.confidence}% de coincidencia)
+                </span>
+                <span className="text-zinc-400 text-[11px]">
+                  {analysisResult.harmonicSpectrum}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-zinc-200 text-[11px] font-mono mb-2.5">
+                <div className="bg-black/40 p-1.5 rounded">BPM: <strong className="text-white">{analysisResult.detectedBpm}</strong></div>
+                <div className="bg-black/40 p-1.5 rounded">Tono: <strong className="text-white">{analysisResult.detectedKey}</strong></div>
+                <div className="bg-black/40 p-1.5 rounded">Tipo: <strong className="text-white uppercase">{analysisResult.detectedType}</strong></div>
+                <div className="bg-black/40 p-1.5 rounded">Mood: <strong className="text-white">{analysisResult.detectedMood}</strong></div>
+              </div>
+              <button
+                type="button"
+                onClick={handleApplyAnalysis}
+                className="w-full py-1.5 bg-amber-400 text-zinc-950 font-bold rounded-lg text-xs hover:bg-amber-300 transition-colors"
+              >
+                Aplicar valores detectados al formulario
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Main Upload Form */}
+        <form onSubmit={handleSubmit} className="space-y-5">
+          {/* 1. Resource Type Selection (Instrumental, Acapella, Loop, Drumkit) */}
+          <div>
+            <label className="text-xs font-bold text-zinc-300 block mb-2">
+              Tipo de Contenido * <span className="text-zinc-400 font-normal">(Identificador y color en catálogo)</span>
+            </label>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              {RESOURCE_TYPES.map((t) => {
+                const isSelected = resourceType === t.id;
+                const info = getResourceBadgeInfo(t.id);
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => setResourceType(t.id)}
+                    className={`p-3 rounded-2xl border text-left transition-all flex flex-col justify-between ${
+                      isSelected
+                        ? `${info.badgeClass} ring-1 ring-amber-400`
+                        : 'bg-[#121520] border-[#1e2334] text-zinc-400 hover:text-zinc-200 hover:border-zinc-700'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-[10px] font-mono font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-black/40 border border-white/10">
+                        {info.badge}
+                      </span>
+                      {isSelected && <Check className="w-3.5 h-3.5 text-white" />}
+                    </div>
+                    <div>
+                      <span className="text-xs font-bold text-white block">{t.label}</span>
+                      <span className="text-[10px] text-zinc-400 block line-clamp-1">
+                        {t.description}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 2. Track Title */}
           <div>
             <label className="text-xs font-bold text-zinc-300 block mb-1.5">
-              Título de la Instrumental *
+              Título del Beat o Recurso *
             </label>
             <input
               type="text"
               required
-              placeholder="Ej: Código Postal (Hard Drill Beat)"
+              placeholder="Ej: Fuego Nocturno, Andes Drill Stems, Voces de Luna..."
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-amber-400"
+              className="w-full bg-[#121520] border border-[#232a40] focus:border-amber-400 rounded-xl px-4 py-2.5 text-xs text-white placeholder-zinc-400 focus:outline-none"
             />
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {/* 3. Genre, Subgenre & Price */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="text-xs font-bold text-zinc-300 block mb-1.5">
-                Género Musical *
+                Género Principal *
               </label>
               <select
                 value={genre}
                 onChange={(e) => setGenre(e.target.value as MusicGenre)}
-                className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-amber-400"
+                className="w-full bg-[#121520] border border-[#232a40] focus:border-amber-400 rounded-xl px-3 py-2 text-xs text-white focus:outline-none font-medium"
               >
+                <option value="Trap">Trap</option>
                 <option value="Hip-Hop">Hip-Hop</option>
                 <option value="Reggaeton">Reggaetón</option>
-                <option value="Electronica">Electrónica</option>
+                <option value="Drill">Drill</option>
+                <option value="Boom-Bap">Boom-Bap</option>
                 <option value="R&B">R&B</option>
+                <option value="Electronica">Electrónica</option>
                 <option value="Pop">Pop</option>
                 <option value="Rock">Rock</option>
-                <option value="Jazz">Jazz</option>
-                <option value="Metal">Metal</option>
                 <option value="Soul">Soul</option>
               </select>
             </div>
 
             <div>
               <label className="text-xs font-bold text-zinc-300 block mb-1.5">
-                Precio de Licencia ($ CLP) *
+                Subgénero / Estilo
               </label>
               <input
-                type="number"
-                min={1000}
-                step={500}
-                required
-                value={price}
-                onChange={(e) => setPrice(Number(e.target.value))}
-                className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-amber-400"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div>
-              <label className="text-xs font-bold text-zinc-300 block mb-1.5">BPM (Tempo)</label>
-              <input
-                type="number"
-                min={60}
-                max={200}
-                value={bpm}
-                onChange={(e) => setBpm(Number(e.target.value))}
-                className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-amber-400"
-              />
-            </div>
-
-            <div>
-              <label className="text-xs font-bold text-zinc-300 block mb-1.5">Tonalidad</label>
-              <input
                 type="text"
-                placeholder="Ej: F# Minor, C Major"
-                value={scaleKey}
-                onChange={(e) => setScaleKey(e.target.value)}
-                className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-amber-400"
+                placeholder="Dark Trap, Dembow Club, etc."
+                value={subgenre}
+                onChange={(e) => setSubgenre(e.target.value)}
+                className="w-full bg-[#121520] border border-[#232a40] focus:border-amber-400 rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-400 focus:outline-none"
               />
             </div>
 
             <div>
               <label className="text-xs font-bold text-zinc-300 block mb-1.5">
-                Patrón de Audio
+                Modalidad de Precio *
+              </label>
+              <div className="flex gap-1.5 p-1 bg-[#121520] rounded-xl border border-[#232a40]">
+                <button
+                  type="button"
+                  onClick={() => setIsFree(false)}
+                  className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-colors ${
+                    !isFree
+                      ? 'bg-amber-400 text-zinc-950 shadow-sm'
+                      : 'text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  De Pago
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsFree(true);
+                    setPrice(0);
+                  }}
+                  className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-colors ${
+                    isFree
+                      ? 'bg-emerald-500 text-zinc-950 font-black shadow-sm'
+                      : 'text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  Gratis ($0)
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Price Value Input if paid */}
+          {!isFree ? (
+            <div className="p-3 rounded-2xl bg-[#121520] border border-[#232a40]">
+              <label className="text-xs font-bold text-zinc-300 block mb-1">
+                Precio de Licencia Comercial ($ CLP) *
+              </label>
+              <input
+                type="number"
+                min={1000}
+                step={500}
+                required={!isFree}
+                value={price}
+                onChange={(e) => setPrice(Number(e.target.value))}
+                className="w-full bg-[#0b0d13] border border-[#232a40] focus:border-amber-400 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none"
+                placeholder="18000"
+              />
+              <span className="text-[10px] text-zinc-500 mt-1 block">
+                Los compradores pagarán este valor + 19% IVA a través de Webpay Plus.
+              </span>
+            </div>
+          ) : (
+            <div className="p-3 rounded-2xl bg-emerald-950/20 border border-emerald-500/30 flex items-center justify-between">
+              <div>
+                <span className="text-xs font-bold text-emerald-400 block">
+                  Beat Gratuito para Artistas (Non-Profit / Demo)
+                </span>
+                <span className="text-[11px] text-zinc-400 block">
+                  Cualquier cantante o productor podrá descargarlo sin costo para maquetar su música.
+                </span>
+              </div>
+              <span className="text-xs font-mono font-black text-emerald-400 bg-emerald-950 px-2.5 py-1 rounded-lg border border-emerald-500/40">
+                $0 CLP
+              </span>
+            </div>
+          )}
+
+          {/* Security & Watermark Option */}
+          <div className="p-3 rounded-2xl bg-[#121520] border border-[#232a40]">
+            <label className="flex items-start gap-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={hasWatermark}
+                onChange={(e) => setHasWatermark(e.target.checked)}
+                className="rounded text-amber-400 focus:ring-amber-400 bg-zinc-900 border-zinc-700 mt-0.5"
+              />
+              <div>
+                <span className="text-xs font-bold text-zinc-200 block">
+                  Proteger preescucha con Marca de Agua Sonora (Audio Watermark)
+                </span>
+                <span className="text-[11px] text-zinc-400 block mt-0.5">
+                  Inserta un tag de seguridad audible durante la reproducción en el catálogo para evitar que ripeen tu instrumental sin pagar la licencia.
+                </span>
+              </div>
+            </label>
+          </div>
+
+          {/* 4. Strict Music Details: BPM, Key, Mood */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label className="text-xs font-bold text-zinc-300 block mb-1.5">
+                Tempo Exacto (BPM) *
+              </label>
+              <input
+                type="number"
+                min={50}
+                max={220}
+                required
+                value={bpm}
+                onChange={(e) => setBpm(Number(e.target.value))}
+                className="w-full bg-[#121520] border border-[#232a40] focus:border-amber-400 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-bold text-zinc-300 block mb-1.5">
+                Tonalidad / Escala *
               </label>
               <select
-                value={audioBeatType}
-                onChange={(e) => setAudioBeatType(e.target.value as Track['audioBeatType'])}
-                className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-amber-400"
+                value={scaleKey}
+                onChange={(e) => setScaleKey(e.target.value)}
+                className="w-full bg-[#121520] border border-[#232a40] focus:border-amber-400 rounded-xl px-3 py-2 text-xs text-white focus:outline-none font-mono"
               >
-                <option value="trap">Trap / 808s</option>
-                <option value="reggaeton">Reggaetón Dembow</option>
-                <option value="boom_bap">Boom Bap 90s</option>
-                <option value="synthwave">Synthwave Retro</option>
-                <option value="rnb">R&B / Soul</option>
-                <option value="lofi">Lo-Fi Study</option>
+                {SCALES.map((scale) => (
+                  <option key={scale} value={scale}>
+                    {scale}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-xs font-bold text-zinc-300 block mb-1.5">
+                Mood / Estado de Ánimo *
+              </label>
+              <select
+                value={mood}
+                onChange={(e) => setMood(e.target.value as MoodType)}
+                className="w-full bg-[#121520] border border-[#232a40] focus:border-amber-400 rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
+              >
+                {MOODS.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
               </select>
             </div>
           </div>
 
+          {/* 5. Audio Stems & Included Formats */}
+          <div>
+            <label className="text-xs font-bold text-zinc-300 block mb-2">
+              Archivos Incluidos en la Descarga
+            </label>
+            <div className="grid grid-cols-3 gap-3">
+              <label className="flex items-center gap-2 p-2.5 rounded-xl bg-[#121520] border border-[#232a40] cursor-pointer hover:border-zinc-600 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={hasWav}
+                  onChange={(e) => setHasWav(e.target.checked)}
+                  className="rounded text-amber-400 focus:ring-amber-400 bg-zinc-900 border-zinc-700"
+                />
+                <span className="text-xs font-mono text-zinc-200">WAV 24-bit</span>
+              </label>
+
+              <label className="flex items-center gap-2 p-2.5 rounded-xl bg-[#121520] border border-[#232a40] cursor-pointer hover:border-zinc-600 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={hasStems}
+                  onChange={(e) => setHasStems(e.target.checked)}
+                  className="rounded text-amber-400 focus:ring-amber-400 bg-zinc-900 border-zinc-700"
+                />
+                <span className="text-xs font-mono text-zinc-200">Stems / Trackouts</span>
+              </label>
+
+              <label className="flex items-center gap-2 p-2.5 rounded-xl bg-[#121520] border border-[#232a40] cursor-pointer hover:border-zinc-600 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={hasMidi}
+                  onChange={(e) => setHasMidi(e.target.checked)}
+                  className="rounded text-amber-400 focus:ring-amber-400 bg-zinc-900 border-zinc-700"
+                />
+                <span className="text-xs font-mono text-zinc-200">Archivos MIDI</span>
+              </label>
+            </div>
+          </div>
+
+          {/* 6. Cover Artwork */}
           <div>
             <label className="text-xs font-bold text-zinc-300 block mb-1.5">
-              Portada del Beat (Selecciona un arte o ingresa URL)
+              Carátula / Arte del Track
             </label>
-            <div className="flex items-center gap-2 mb-2 overflow-x-auto pb-1">
+            <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none">
               {PRESET_COVERS.map((url, i) => (
                 <img
                   key={i}
                   src={url}
                   alt="Preset"
                   onClick={() => setCoverUrl(url)}
-                  className={`w-14 h-14 rounded-lg object-cover cursor-pointer transition-all ${
-                    coverUrl === url ? 'ring-2 ring-amber-400 scale-105' : 'opacity-60 hover:opacity-100'
+                  className={`w-14 h-14 rounded-xl object-cover cursor-pointer transition-all flex-shrink-0 ${
+                    coverUrl === url
+                      ? 'ring-2 ring-amber-400 scale-105'
+                      : 'opacity-50 hover:opacity-100'
                   }`}
                 />
               ))}
             </div>
-            <input
-              type="url"
-              placeholder="O pega una URL directa de imagen..."
-              value={coverUrl}
-              onChange={(e) => setCoverUrl(e.target.value)}
-              className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-amber-400"
-            />
           </div>
 
+          {/* 7. Description */}
           <div>
             <label className="text-xs font-bold text-zinc-300 block mb-1.5">
-              Descripción y detalles de los Stems
+              Descripción y Notas para el Artista
             </label>
             <textarea
-              rows={3}
-              placeholder="Describe el ambiente, los instrumentos empleados y las condiciones de la licencia..."
+              rows={2}
+              placeholder="Indica recomendaciones de voces, instrumentos destacados o condiciones comerciales..."
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              className="w-full bg-zinc-900 border border-zinc-700 rounded-xl p-3 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-amber-400"
+              className="w-full bg-[#121520] border border-[#232a40] focus:border-amber-400 rounded-xl p-3 text-xs text-white placeholder-zinc-400 focus:outline-none"
             />
           </div>
 
-          <div className="pt-4 flex gap-3">
+          {/* Actions */}
+          <div className="pt-2 flex gap-3">
             <button
               type="button"
               onClick={onClose}

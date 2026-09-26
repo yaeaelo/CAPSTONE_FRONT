@@ -1,6 +1,24 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { User, Track, CartItem, ProducerSubscription, SaleRecord, UserType } from '../types';
-import { INITIAL_USERS, INITIAL_TRACKS, INITIAL_SUBSCRIPTIONS, INITIAL_SALES } from '../data/mockData';
+import {
+  User,
+  Track,
+  CartItem,
+  ProducerSubscription,
+  SaleRecord,
+  PurchaseRecord,
+  UserType,
+  ResourceType,
+  MusicGenre,
+  MoodType,
+  LicenseContract,
+} from '../types';
+import {
+  INITIAL_USERS,
+  INITIAL_TRACKS,
+  INITIAL_SUBSCRIPTIONS,
+  INITIAL_SALES,
+  INITIAL_PURCHASES,
+} from '../data/mockData';
 import { audioEngine } from '../utils/audioEngine';
 
 interface AppContextType {
@@ -10,11 +28,16 @@ interface AppContextType {
   cart: CartItem[];
   subscriptions: ProducerSubscription[];
   sales: SaleRecord[];
+  purchases: PurchaseRecord[];
   activeTrack: Track | null;
   isPlaying: boolean;
   currentTime: number;
   duration: number;
   volume: number;
+  globalSearchQuery: string;
+  setGlobalSearchQuery: (q: string) => void;
+  activeResourceFilter: ResourceType | 'all';
+  setActiveResourceFilter: (filter: ResourceType | 'all') => void;
   playTrack: (track: Track) => void;
   togglePlay: () => void;
   seekAudio: (seconds: number) => void;
@@ -26,16 +49,30 @@ interface AppContextType {
   checkoutCart: () => { success: boolean; buyOrder: string; amount: number };
   uploadTrack: (data: {
     title: string;
-    genre: Track['genre'];
+    resourceType: ResourceType;
+    genre: MusicGenre;
+    subgenre?: string;
     price: number;
     description: string;
     coverUrl?: string;
     bpm: number;
     scaleKey: string;
+    mood: MoodType;
     audioBeatType: Track['audioBeatType'];
+    hasStems: boolean;
+    hasWav: boolean;
+    hasMidi: boolean;
+    isFree?: boolean;
+    allowFreeDownload?: boolean;
+    hasWatermark?: boolean;
   }) => Track;
   updateTrack: (trackId: string, data: Partial<Track>) => void;
   deleteTrack: (trackId: string) => void;
+  claimFreeTrack: (trackId: string) => boolean;
+  downloadAuditionDemo: (track: Track) => void;
+  getContractForPurchase: (purchase: PurchaseRecord) => LicenseContract;
+  getContractForSale: (sale: SaleRecord) => LicenseContract;
+  generateLicenseForTrack: (track: Track) => LicenseContract;
   addComment: (trackId: string, content: string) => void;
   deleteComment: (trackId: string, commentId: string) => void;
   switchUser: (userId: string) => void;
@@ -56,7 +93,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [tracks, setTracks] = useState<Track[]>(() => {
     const saved = localStorage.getItem('bc_tracks');
-    return saved ? JSON.parse(saved) : INITIAL_TRACKS;
+    if (!saved) return INITIAL_TRACKS;
+    try {
+      const parsed = JSON.parse(saved);
+      // Ensure all tracks have resourceType and mood if from old cache
+      return parsed.map((t: any) => ({
+        ...t,
+        resourceType: t.resourceType || 'instrumental',
+        mood: t.mood || 'Oscuro',
+        hasStems: t.hasStems !== undefined ? t.hasStems : true,
+        hasWav: t.hasWav !== undefined ? t.hasWav : true,
+        hasMidi: t.hasMidi !== undefined ? t.hasMidi : false,
+      }));
+    } catch {
+      return INITIAL_TRACKS;
+    }
   });
 
   const [cart, setCart] = useState<CartItem[]>(() => {
@@ -71,10 +122,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return saved ? JSON.parse(saved) : INITIAL_SALES;
   });
 
+  const [purchases, setPurchases] = useState<PurchaseRecord[]>(() => {
+    const saved = localStorage.getItem('bc_purchases');
+    return saved ? JSON.parse(saved) : INITIAL_PURCHASES;
+  });
+
   const [currentUserId, setCurrentUserId] = useState<string>(() => {
     const saved = localStorage.getItem('bc_current_user_id');
     return saved || 'user_art_1'; // Default as artist MC Flow
   });
+
+  // Global search & Resource filter
+  const [globalSearchQuery, setGlobalSearchQuery] = useState('');
+  const [activeResourceFilter, setActiveResourceFilter] = useState<ResourceType | 'all'>('all');
 
   // Audio Player State
   const [activeTrack, setActiveTrack] = useState<Track | null>(null);
@@ -101,6 +161,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     localStorage.setItem('bc_sales', JSON.stringify(sales));
   }, [sales]);
+
+  useEffect(() => {
+    localStorage.setItem('bc_purchases', JSON.stringify(purchases));
+  }, [purchases]);
 
   useEffect(() => {
     localStorage.setItem('bc_current_user_id', currentUserId);
@@ -160,7 +224,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!currentUser) return;
     const isLiked = currentUser.likedTrackIds.includes(trackId);
 
-    // Update user's liked tracks
     const updatedUserLiked = isLiked
       ? currentUser.likedTrackIds.filter((id) => id !== trackId)
       : [...currentUser.likedTrackIds, trackId];
@@ -169,7 +232,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       prev.map((u) => (u.id === currentUser.id ? { ...u, likedTrackIds: updatedUserLiked } : u))
     );
 
-    // Update track like count
     setTracks((prev) =>
       prev.map((t) =>
         t.id === trackId
@@ -208,22 +270,51 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const iva = Math.round(subtotal * 0.19);
     const totalAmount = subtotal + iva;
     const buyOrder = 'BC-' + Math.floor(100000 + Math.random() * 900000);
+    const today = new Date().toISOString().split('T')[0];
 
     const purchasedIds = cart.map((item) => item.track.id);
 
-    // Record sales
-    const newSales: SaleRecord[] = cart.map((item) => ({
-      id: 'sale_' + Math.random().toString(36).substr(2, 9),
-      buyerId: currentUser.id,
-      buyerName: currentUser.artistName || currentUser.username,
-      trackId: item.track.id,
-      trackTitle: item.track.title,
-      amount: item.track.price,
-      date: new Date().toISOString().split('T')[0],
-      status: 'AUTHORIZED',
-    }));
+    // Record sales (aligned with Django HistorialVenta)
+    const newSales: SaleRecord[] = cart.map((item) => {
+      const code = 'LIC-' + buyOrder;
+      const hash = 'SHA256:' + Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2);
+      return {
+        id: 'sale_' + Math.random().toString(36).substr(2, 9),
+        buyerId: currentUser.id,
+        buyerName: currentUser.artistName || currentUser.username,
+        trackId: item.track.id,
+        trackTitle: item.track.title,
+        amount: item.track.price,
+        date: today,
+        status: 'AUTHORIZED',
+        buyOrder,
+        licenseCode: code,
+        verificationHash: hash,
+        licenseType: 'comercial_wav_stems',
+      };
+    });
+
+    // Record purchases (aligned with Django HistorialCompra)
+    const newPurchases: PurchaseRecord[] = cart.map((item) => {
+      const code = 'LIC-' + buyOrder;
+      const hash = 'SHA256:' + Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2);
+      return {
+        id: 'pur_' + Math.random().toString(36).substr(2, 9),
+        userId: currentUser.id,
+        trackId: item.track.id,
+        trackTitle: item.track.title,
+        producerName: item.track.producerName,
+        amount: item.track.price,
+        buyOrder,
+        date: today,
+        licenseCode: code,
+        verificationHash: hash,
+        licenseType: 'comercial_wav_stems',
+      };
+    });
 
     setSales((prev) => [...newSales, ...prev]);
+    setPurchases((prev) => [...newPurchases, ...prev]);
 
     // Update user's purchased tracks
     setUsers((prev) =>
@@ -242,15 +333,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const uploadTrack = (data: {
     title: string;
-    genre: Track['genre'];
+    resourceType: ResourceType;
+    genre: MusicGenre;
+    subgenre?: string;
     price: number;
     description: string;
     coverUrl?: string;
     bpm: number;
     scaleKey: string;
+    mood: MoodType;
     audioBeatType: Track['audioBeatType'];
+    hasStems: boolean;
+    hasWav: boolean;
+    hasMidi: boolean;
+    isFree?: boolean;
+    allowFreeDownload?: boolean;
+    hasWatermark?: boolean;
   }): Track => {
     const id = 'track_' + Date.now();
+    const isFree = data.isFree ?? (data.price === 0);
     const newTrack: Track = {
       id,
       title: data.title,
@@ -258,22 +359,68 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       producerName: currentUser?.artistName || currentUser?.username || 'Productor',
       producerUsername: currentUser?.username || 'productor',
       producerAvatar: currentUser?.avatarUrl || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400&auto=format&fit=crop&q=80',
+      resourceType: data.resourceType,
       genre: data.genre,
-      price: data.price,
+      subgenre: data.subgenre || '',
+      price: isFree ? 0 : data.price,
       coverUrl: data.coverUrl || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80',
       description: data.description,
       bpm: data.bpm || 130,
       scaleKey: data.scaleKey || 'C Minor',
+      mood: data.mood || 'Oscuro',
       duration: 180,
       likesCount: 0,
-      tags: [data.genre, 'Nuevo', `${data.bpm} BPM`],
+      tags: [data.genre, data.resourceType, `${data.bpm} BPM`, data.mood, ...(isFree ? ['Free', 'Gratis'] : [])],
       audioBeatType: data.audioBeatType || 'trap',
+      hasStems: data.hasStems,
+      hasWav: data.hasWav,
+      hasMidi: data.hasMidi,
+      isFree,
+      allowFreeDownload: data.allowFreeDownload ?? isFree,
+      hasWatermark: data.hasWatermark ?? !isFree,
       comments: [],
       createdAt: new Date().toISOString().split('T')[0],
     };
 
     setTracks((prev) => [newTrack, ...prev]);
     return newTrack;
+  };
+
+  const claimFreeTrack = (trackId: string): boolean => {
+    if (!currentUser) return false;
+    const track = tracks.find((t) => t.id === trackId);
+    if (!track) return false;
+    if (currentUser.purchasedTrackIds.includes(trackId)) return true;
+
+    const buyOrder = 'FREE-' + Math.floor(100000 + Math.random() * 900000);
+    const today = new Date().toISOString().split('T')[0];
+
+    const freeCode = 'LIC-FREE-' + Math.floor(100000 + Math.random() * 900000);
+    const freeHash = 'SHA256:' + Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2);
+
+    const freePurchase: PurchaseRecord = {
+      id: 'pur_free_' + Math.random().toString(36).substr(2, 9),
+      userId: currentUser.id,
+      trackId: track.id,
+      trackTitle: track.title,
+      producerName: track.producerName,
+      amount: 0,
+      buyOrder,
+      date: today,
+      licenseCode: freeCode,
+      verificationHash: freeHash,
+      licenseType: 'maqueta_ensayo',
+    };
+
+    setPurchases((prev) => [freePurchase, ...prev]);
+    setUsers((prev) =>
+      prev.map((u) =>
+        u.id === currentUser.id
+          ? { ...u, purchasedTrackIds: Array.from(new Set([...u.purchasedTrackIds, trackId])) }
+          : u
+      )
+    );
+    return true;
   };
 
   const updateTrack = (trackId: string, data: Partial<Track>) => {
@@ -386,6 +533,165 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return true;
   };
 
+  const downloadAuditionDemo = (track: Track) => {
+    const textContent = `================================================================================
+       BEATSCLOUD CHILE · LICENCIA DE COMPOSICIÓN Y ENSAYO (DEMO GRATIS)
+================================================================================
+
+Pista: "${track.title}"
+Productor: ${track.producerName} (@${track.producerUsername})
+Tempo: ${track.bpm} BPM | Escala: ${track.scaleKey}
+Descargado por: ${currentUser?.artistName || currentUser?.username || 'Artista'}
+Fecha de Descarga: ${new Date().toISOString().split('T')[0]}
+
+CONDICIONES DEL PUNTO MEDIO (ENSAYO & COMPOSICIÓN VOCAL):
+1. Esta maqueta MP3 está destinada exclusivamente para que puedas grabar tu voz,
+   escribir tu letra y comprobar en tu DAW/estudio si tu flow y melodía encajan.
+2. No está permitido subir esta grabación con propósitos comerciales a Spotify,
+   Apple Music ni monetizar en YouTube sin la Licencia Comercial.
+3. Una vez que tu tema esté compuesto y listo para ser masterizado, adquiere la
+   Licencia Comercial en BeatsCloud para recibir:
+   - El máster original en WAV 24-bit sin pérdida ni marcas.
+   - Los Stems multitrack por pistas separadas (batería, bajo, sintetizadores).
+   - El Certificado de Licencia Oficial con Código Único para inscripción en SCD
+     y autorización ante distribuidoras (DistroKid, Altafonte).
+
+BeatsCloud Chile SpA · Regularizando la música en Chile y Latinoamérica.
+================================================================================`;
+
+    const blob = new Blob([textContent], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Maqueta_Ensayo_${track.title.replace(/[\s/]/g, '_')}_BeatsCloud.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const getContractForPurchase = (purchase: PurchaseRecord): LicenseContract => {
+    const track = tracks.find((t) => t.id === purchase.trackId);
+    const buyerUser = users.find((u) => u.id === purchase.userId) || currentUser;
+    const producerUser = users.find((u) => u.id === track?.producerId);
+
+    const isFree = purchase.amount === 0;
+
+    return {
+      licenseCode: purchase.licenseCode || `LIC-${purchase.buyOrder}`,
+      verificationHash:
+        purchase.verificationHash ||
+        'SHA256:7e9b2a1c0d4e8f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a',
+      issueDate: purchase.date || '2026-03-12',
+      trackId: purchase.trackId,
+      trackTitle: purchase.trackTitle,
+      trackGenre: track?.genre || 'Trap',
+      trackBpm: track?.bpm || 135,
+      trackKey: track?.scaleKey || 'A Menor',
+      producerId: producerUser?.id || track?.producerId || 'user_prod_1',
+      producerName: purchase.producerName || track?.producerName || 'Metro Santiago',
+      producerUsername: producerUser?.username || track?.producerUsername || 'metrosantiago',
+      producerRut: '18.421.902-3 (Verificado)',
+      buyerId: buyerUser?.id || purchase.userId,
+      buyerName: buyerUser?.artistName || buyerUser?.username || 'MC Flow Valparaíso',
+      buyerUsername: buyerUser?.username || 'mcflow',
+      buyerRut: '19.824.110-K (Verificado)',
+      amountClp: purchase.amount,
+      buyOrder: purchase.buyOrder,
+      licenseType: isFree ? 'maqueta_ensayo' : 'comercial_wav_stems',
+      musicRightsSplit: {
+        producerPercent: 50,
+        artistPercent: 50,
+        scdRegistered: true,
+      },
+      distributionTerms: {
+        streamsLimit: isFree ? 'Solo Maqueta No Comercial' : 'Ilimitado (Streaming comercial)',
+        musicVideoMonetized: !isFree,
+        radioBroadcasting: !isFree,
+        livePerformancesForProfit: !isFree,
+        contentIdProtected: true,
+      },
+    };
+  };
+
+  const getContractForSale = (sale: SaleRecord): LicenseContract => {
+    const track = tracks.find((t) => t.id === sale.trackId);
+    const buyerUser = users.find((u) => u.id === sale.buyerId);
+    const producerUser = users.find((u) => u.id === track?.producerId) || currentUser;
+
+    return {
+      licenseCode: sale.licenseCode || `LIC-${sale.buyOrder}`,
+      verificationHash:
+        sale.verificationHash ||
+        'SHA256:7e9b2a1c0d4e8f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a',
+      issueDate: sale.date || '2026-03-12',
+      trackId: sale.trackId,
+      trackTitle: sale.trackTitle,
+      trackGenre: track?.genre || 'Trap',
+      trackBpm: track?.bpm || 135,
+      trackKey: track?.scaleKey || 'A Menor',
+      producerId: producerUser?.id || 'user_prod_1',
+      producerName: producerUser?.artistName || producerUser?.username || 'Metro Santiago',
+      producerUsername: producerUser?.username || 'metrosantiago',
+      producerRut: '18.421.902-3 (Verificado)',
+      buyerId: sale.buyerId,
+      buyerName: sale.buyerName,
+      buyerUsername: buyerUser?.username || 'mcflow',
+      buyerRut: '19.824.110-K (Verificado)',
+      amountClp: sale.amount,
+      buyOrder: sale.buyOrder,
+      licenseType: 'comercial_wav_stems',
+      musicRightsSplit: {
+        producerPercent: 50,
+        artistPercent: 50,
+        scdRegistered: true,
+      },
+      distributionTerms: {
+        streamsLimit: 'Ilimitado (Streaming comercial)',
+        musicVideoMonetized: true,
+        radioBroadcasting: true,
+        livePerformancesForProfit: true,
+        contentIdProtected: true,
+      },
+    };
+  };
+
+  const generateLicenseForTrack = (track: Track): LicenseContract => {
+    const buyer = currentUser || users[1];
+    const buyOrder = 'BC-' + Math.floor(100000 + Math.random() * 900000);
+    return {
+      licenseCode: 'LIC-' + buyOrder,
+      verificationHash: 'SHA256:' + Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2),
+      issueDate: new Date().toISOString().split('T')[0],
+      trackId: track.id,
+      trackTitle: track.title,
+      trackGenre: track.genre,
+      trackBpm: track.bpm,
+      trackKey: track.scaleKey,
+      producerId: track.producerId,
+      producerName: track.producerName,
+      producerUsername: track.producerUsername,
+      producerRut: '18.421.902-3 (Verificado)',
+      buyerId: buyer.id,
+      buyerName: buyer.artistName || buyer.username,
+      buyerUsername: buyer.username,
+      buyerRut: '19.824.110-K (Verificado)',
+      amountClp: track.price,
+      buyOrder,
+      licenseType: track.price === 0 ? 'maqueta_ensayo' : 'comercial_wav_stems',
+      musicRightsSplit: {
+        producerPercent: 50,
+        artistPercent: 50,
+        scdRegistered: true,
+      },
+      distributionTerms: {
+        streamsLimit: track.price === 0 ? 'Solo Maqueta No Comercial' : 'Ilimitado (Streaming comercial)',
+        musicVideoMonetized: track.price > 0,
+        radioBroadcasting: track.price > 0,
+        livePerformancesForProfit: track.price > 0,
+        contentIdProtected: true,
+      },
+    };
+  };
+
   return (
     <AppContext.Provider
       value={{
@@ -395,11 +701,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         cart,
         subscriptions,
         sales,
+        purchases,
         activeTrack,
         isPlaying,
         currentTime,
         duration,
         volume,
+        globalSearchQuery,
+        setGlobalSearchQuery,
+        activeResourceFilter,
+        setActiveResourceFilter,
         playTrack,
         togglePlay,
         seekAudio,
@@ -412,6 +723,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         uploadTrack,
         updateTrack,
         deleteTrack,
+        claimFreeTrack,
+        downloadAuditionDemo,
+        getContractForPurchase,
+        getContractForSale,
+        generateLicenseForTrack,
         addComment,
         deleteComment,
         switchUser,
