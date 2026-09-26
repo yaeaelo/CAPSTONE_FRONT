@@ -25,7 +25,17 @@ BeatsCloud es una plataforma web para la publicación, búsqueda, compra y venta
 - **Frontend:** React 19 + TypeScript + Vite
 - **Estilos:** Tailwind CSS v4 + Lucide Icons
 - **Audio:** Web Audio API (secuenciador y motor procedural de audio)
-- **Ejecución:** Node.js 22 (`npm run dev` en puerto 3000)
+- **Ejecución:** Node.js ≥ 18 (`npm run dev` en puerto 3000)
+
+## ⚡ Cómo ejecutarla (primera vez)
+
+```bash
+cd <carpeta-del-proyecto>   # donde está package.json
+npm install                 # OBLIGATORIO la primera vez (crea node_modules/ con vite, react...)
+npm run dev                 # abre http://localhost:3000
+```
+
+> Si `npm run dev` falla con **"vite: orden no encontrada"**, es porque falta `npm install` en esa máquina/carpeta. `node_modules/` a propósito NO se sube al repositorio.
 
 ## 📖 Documentación completa del sistema
 

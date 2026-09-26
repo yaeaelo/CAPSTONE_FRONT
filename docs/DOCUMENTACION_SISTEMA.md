@@ -138,10 +138,13 @@ isTrackProtected(track) = track.hasWatermark && !usuarioLaAdquirió && !track.is
 
 ```bash
 git clone <repo>            # o descargar zip
-cd beatscloud
-npm install
+cd beatscloud               # (o la carpeta donde descomprimiste, ej. CAPSTONE_PRIV-main)
+npm install                 # instala vite, react, tailwind, etc. en ./node_modules
 npm run dev                 # http://localhost:3000
 ```
+
+> ⚠️ **Importante:** `node_modules/` está excluido del repositorio (vía `.gitignore`), por diseño: nunca se sube al Git. Por eso, si al ejecutar `npm run dev` aparece el error
+> `sh: línea 1: vite: orden no encontrada`, significa que **no has instalado las dependencias** en esa copia del proyecto. La solución es simplemente correr `npm install` una vez dentro de la carpeta raíz (donde está `package.json`) y volver a ejecutar `npm run dev`. No uses `npm start` (no existe en este proyecto; el comando es `npm run dev`). Si descargaste un ZIP, verifica que `package-lock.json` esté presente — `npm install` lo usa para instalar exactamente las versiones probadas.
 
 Producción / revisión de tipos:
 ```bash
