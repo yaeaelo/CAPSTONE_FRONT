@@ -26,3 +26,11 @@ BeatsCloud es una plataforma web para la publicación, búsqueda, compra y venta
 - **Estilos:** Tailwind CSS v4 + Lucide Icons
 - **Audio:** Web Audio API (secuenciador y motor procedural de audio)
 - **Ejecución:** Node.js 22 (`npm run dev` en puerto 3000)
+
+## 📖 Documentación completa del sistema
+
+- **[docs/DOCUMENTACION_SISTEMA.md](docs/DOCUMENTACION_SISTEMA.md)** — arquitectura, modelo de datos (equivalencia con Django), lógica de negocio (seguridad de preview, comercio Webpay, licencias), instrucciones de instalación y **plan de prueba guiado paso a paso para demostrar el avance al grupo**.
+
+## ✅ Estado actual (Alpha Frontend)
+
+Sistema navegable completo: catálogo con filtros por tipo de recurso (instrumental/loop/acapella/drumkit con tags de color), reproductor global sintetizado con visualizer, **seguridad real de preescucha** (atenuación de pistas no adquiridas), carrito + checkout Webpay simulado (subtotal + IVA 19%), certificados de licencia con hash verificable, verificador público de licencias, subida con analizador acústico de fallback, perfiles productor/artista, favoritos, comentarios y suscripciones VIP. Backend Django/R2/Webpay real pendiente de credenciales (modelos ya alineados a las tablas originales).

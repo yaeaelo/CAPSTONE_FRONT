@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { User, Track } from '../types';
+import { LicenseContract, User, Track } from '../types';
+import { LicenseCertificateModal } from './LicenseCertificateModal';
 import {
   Play,
   Pause,
@@ -14,6 +15,7 @@ import {
   Heart,
   Calendar,
   CheckCircle,
+  FileText,
   Plus,
 } from 'lucide-react';
 
@@ -44,12 +46,14 @@ export const ProducerProfilePage: React.FC<ProducerProfilePageProps> = ({
     deleteTrack,
     subscribeToProducer,
     updateProfile,
+    getContractForSale,
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<'beats' | 'suscripciones' | 'ventas'>(initialTab);
   const [isEditingBio, setIsEditingBio] = useState(false);
   const [editedBio, setEditedBio] = useState('');
   const [subSuccess, setSubSuccess] = useState<string | null>(null);
+  const [viewingContract, setViewingContract] = useState<LicenseContract | null>(null);
 
   // Target producer
   const targetUser: User = producerId
@@ -442,6 +446,7 @@ export const ProducerProfilePage: React.FC<ProducerProfilePageProps> = ({
                     <th className="p-4">Comprador</th>
                     <th className="p-4">Monto</th>
                     <th className="p-4">Estado</th>
+                    <th className="p-4 text-right">Licencia</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-800 text-zinc-300 font-mono">
@@ -458,6 +463,16 @@ export const ProducerProfilePage: React.FC<ProducerProfilePageProps> = ({
                           {sale.status}
                         </span>
                       </td>
+                      <td className="p-4 text-right">
+                        <button
+                          onClick={() => setViewingContract(getContractForSale(sale))}
+                          className="inline-flex items-center gap-1.5 bg-[#181d2c] hover:bg-[#22283d] text-amber-300 border border-amber-400/30 font-bold px-3 py-1.5 rounded-xl text-[10px] transition-colors"
+                          title={`Ver certificado oficial de licencia ${sale.licenseCode || ''}`}
+                        >
+                          <FileText className="w-3 h-3 text-amber-400" />
+                          <span>Certificado</span>
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -465,6 +480,13 @@ export const ProducerProfilePage: React.FC<ProducerProfilePageProps> = ({
             )}
           </div>
         )}
+
+      {/* Certificado de Licencia emitido al comprador (vista productor) */}
+      <LicenseCertificateModal
+        isOpen={viewingContract !== null}
+        onClose={() => setViewingContract(null)}
+        contract={viewingContract}
+      />
       </div>
     </div>
   );

@@ -70,6 +70,9 @@ export const TrackDetailModal: React.FC<TrackDetailModalProps> = ({
   const isThisPlaying = isPlaying && activeTrack?.id === track.id;
   const isLiked = currentUser?.likedTrackIds.includes(track.id);
   const isPurchased = currentUser?.purchasedTrackIds.includes(track.id);
+  // Regla de negocio "Punto Medio": un beat de pago puede ofrecer la maqueta
+  // de composición si el productor activó allowFreeDownload al subirlo.
+  const canDownloadAuditionDemo = !isPurchased && (track.isFree || track.price === 0 ? false : track.allowFreeDownload === true);
   const badge = getResourceBadgeInfo(track.resourceType);
 
   const formatTime = (secs: number) => {
@@ -239,19 +242,21 @@ export const TrackDetailModal: React.FC<TrackDetailModalProps> = ({
                         <span>Comprar Licencia Comercial (WAV + Stems)</span>
                       </button>
 
-                      {/* Sweet spot action: Writing / Audition demo */}
-                      <button
-                        onClick={() => {
-                          setAuditionSuccess(true);
-                          downloadAuditionDemo(track);
-                          setTimeout(() => setAuditionSuccess(false), 3000);
-                        }}
-                        className="flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white font-bold px-4 py-3 rounded-xl text-xs border border-zinc-700 transition-colors"
-                        title="Descarga una copia MP3 para probar tu voz y componer antes de comprar"
-                      >
-                        <Mic2 className="w-4 h-4 text-amber-400" />
-                        <span>{auditionSuccess ? '¡Maqueta Descargada!' : 'Descargar Maqueta para Composición'}</span>
-                      </button>
+                      {/* Sweet spot action: Writing / Audition demo (solo si el productor la habilitó) */}
+                      {canDownloadAuditionDemo && (
+                        <button
+                          onClick={() => {
+                            setAuditionSuccess(true);
+                            downloadAuditionDemo(track);
+                            setTimeout(() => setAuditionSuccess(false), 3000);
+                          }}
+                          className="flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white font-bold px-4 py-3 rounded-xl text-xs border border-zinc-700 transition-colors"
+                          title="Descarga una copia MP3 con marca de agua para probar tu voz y componer antes de comprar"
+                        >
+                          <Mic2 className="w-4 h-4 text-amber-400" />
+                          <span>{auditionSuccess ? '¡Maqueta Descargada!' : 'Descargar Maqueta para Composición'}</span>
+                        </button>
+                      )}
                     </div>
                   )
                 ) : (

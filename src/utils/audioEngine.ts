@@ -8,6 +8,7 @@ class BeatsAudioEngine {
   private timerId: number | null = null;
   private currentStep: number = 0;
   private masterGain: GainNode | null = null;
+  private previewGain: GainNode | null = null; // Atenua la preescucha no adquirida (seguridad)
   private analyser: AnalyserNode | null = null;
   private onTimeUpdateCallback: ((time: number, duration: number) => void) | null = null;
   private onPlayStateChangeCallback: ((playing: boolean) => void) | null = null;
@@ -22,10 +23,16 @@ class BeatsAudioEngine {
       this.masterGain = this.ctx.createGain();
       this.masterGain.gain.setValueAtTime(0.7, this.ctx.currentTime);
 
+      // Cadena de seguridad: master -> previewGain -> analyser -> destino.
+      // previewGain atenúa la preescucha cuando el usuario no adquirió la pista.
+      this.previewGain = this.ctx.createGain();
+      this.previewGain.gain.setValueAtTime(1, this.ctx.currentTime);
+
       this.analyser = this.ctx.createAnalyser();
       this.analyser.fftSize = 64;
 
-      this.masterGain.connect(this.analyser);
+      this.masterGain.connect(this.previewGain);
+      this.previewGain.connect(this.analyser);
       this.analyser.connect(this.ctx.destination);
     }
     if (this.ctx.state === 'suspended') {
@@ -41,6 +48,17 @@ class BeatsAudioEngine {
     if (this.masterGain && this.ctx) {
       this.masterGain.gain.setValueAtTime(Math.max(0, Math.min(1, vol)), this.ctx.currentTime);
     }
+  }
+
+  /**
+   * Seguridad de preescucha: cuando el usuario NO adquirió la pista, se aplica
+   * atenuación al master del motor (equivalente a un "tag protegido": la
+   * preview suena amortiguada frente al master WAV full-band).
+   */
+  public setPreviewSecurityMode(isProtected: boolean) {
+    if (!this.ctx || !this.previewGain) return;
+    const target = isProtected ? 0.45 : 1;
+    this.previewGain.gain.setTargetAtTime(target, this.ctx.currentTime, 0.05);
   }
 
   public setCallbacks(

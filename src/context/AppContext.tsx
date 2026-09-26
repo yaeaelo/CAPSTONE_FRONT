@@ -65,6 +65,7 @@ interface AppContextType {
     isFree?: boolean;
     allowFreeDownload?: boolean;
     hasWatermark?: boolean;
+    duration?: number; // Segundos detectados del archivo subido (opcional)
   }) => Track;
   updateTrack: (trackId: string, data: Partial<Track>) => void;
   deleteTrack: (trackId: string) => void;
@@ -145,6 +146,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const currentUser = users.find((u) => u.id === currentUserId) || null;
 
+  // Regla de seguridad central: una pista está protegida (preview amortiguada,
+  // sin descarga de master) si tiene marca de agua y el usuario no la adquirió.
+  const isTrackProtected = (track: Track | null): boolean => {
+    if (!track) return false;
+    const owned = currentUser?.purchasedTrackIds.includes(track.id) ?? false;
+    if (owned) return false;
+    if (track.isFree || track.price === 0) return false; // Beats gratis: demo libre sin protección
+    return track.hasWatermark ?? true;
+  };
+
   // Persist to localStorage
   useEffect(() => {
     localStorage.setItem('bc_users', JSON.stringify(users));
@@ -184,6 +195,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const playTrack = (track: Track) => {
+    // Seguridad de preescucha: amortiguar la preview si la pista no fue adquirida.
+    audioEngine.setPreviewSecurityMode(isTrackProtected(track));
+
     if (activeTrack?.id === track.id) {
       if (isPlaying) {
         audioEngine.pause();
@@ -203,6 +217,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       return;
     }
+    audioEngine.setPreviewSecurityMode(isTrackProtected(activeTrack));
     if (isPlaying) {
       audioEngine.pause();
     } else {
@@ -349,6 +364,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     isFree?: boolean;
     allowFreeDownload?: boolean;
     hasWatermark?: boolean;
+    duration?: number; // Segundos. Si no se informa, se usa la maqueta por defecto (180s)
   }): Track => {
     const id = 'track_' + Date.now();
     const isFree = data.isFree ?? (data.price === 0);
@@ -368,7 +384,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       bpm: data.bpm || 130,
       scaleKey: data.scaleKey || 'C Minor',
       mood: data.mood || 'Oscuro',
-      duration: 180,
+      duration: data.duration && data.duration > 0 ? data.duration : 180,
       likesCount: 0,
       tags: [data.genre, data.resourceType, `${data.bpm} BPM`, data.mood, ...(isFree ? ['Free', 'Gratis'] : [])],
       audioBeatType: data.audioBeatType || 'trap',

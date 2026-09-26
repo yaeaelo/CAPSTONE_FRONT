@@ -84,11 +84,43 @@ export const UploadTrackModal: React.FC<UploadTrackModalProps> = ({
   const [hasMidi, setHasMidi] = useState(false);
   const [isFree, setIsFree] = useState(false);
   const [hasWatermark, setHasWatermark] = useState(true);
+  // "Punto medio": permitir descarga de maqueta de composición en beats de pago
+  const [allowFreeDownload, setAllowFreeDownload] = useState(false);
+
+  // Duración real detectada del archivo subido (segundos). Si no hay archivo,
+  // uploadTrack usará su valor por defecto (180s) como antes.
+  const [detectedDuration, setDetectedDuration] = useState<number | null>(null);
 
   // Fallback Audio Analyzer State
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AudioAnalysisResult | null>(null);
   const [fileNameInput, setFileNameInput] = useState('');
+
+  // Autodetección por nombre de archivo: si el productor sube un archivo real,
+  // se usa su nombre como insumo del analizador de fallback.
+  const handleFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFileNameInput(file.name);
+    if (!title.trim()) {
+      setTitle(file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim());
+    }
+
+    // Extracción de metadatos reales del audio (duración y BPM aproximado).
+    // En producción esto lo hará el backend Django con Mutagen al recibir el
+    // archivo en Cloudflare R2; aquí se replica la lógica en el cliente.
+    const url = URL.createObjectURL(file);
+    const probe = new Audio();
+    probe.preload = 'metadata';
+    probe.onloadedmetadata = () => {
+      URL.revokeObjectURL(url);
+      if (Number.isFinite(probe.duration) && probe.duration > 0) {
+        setDetectedDuration(Math.round(probe.duration));
+      }
+    };
+    probe.onerror = () => URL.revokeObjectURL(url);
+    probe.src = url;
+  };
 
   useEffect(() => {
     if (trackToEdit) {
@@ -108,6 +140,7 @@ export const UploadTrackModal: React.FC<UploadTrackModalProps> = ({
       setHasMidi(trackToEdit.hasMidi);
       setIsFree(trackToEdit.isFree ?? trackToEdit.price === 0);
       setHasWatermark(trackToEdit.hasWatermark ?? true);
+      setAllowFreeDownload(trackToEdit.allowFreeDownload ?? false);
     } else {
       setTitle('');
       setResourceType('instrumental');
@@ -125,8 +158,10 @@ export const UploadTrackModal: React.FC<UploadTrackModalProps> = ({
       setHasMidi(false);
       setIsFree(false);
       setHasWatermark(true);
+      setAllowFreeDownload(false);
       setAnalysisResult(null);
       setFileNameInput('');
+      setDetectedDuration(null);
     }
   }, [trackToEdit, isOpen]);
 
@@ -176,8 +211,9 @@ export const UploadTrackModal: React.FC<UploadTrackModalProps> = ({
         hasStems,
         hasMidi,
         isFree,
-        allowFreeDownload: isFree,
+        allowFreeDownload: isFree ? true : allowFreeDownload,
         hasWatermark,
+        ...(detectedDuration ? { duration: detectedDuration } : {}),
       });
     } else {
       uploadTrack({
@@ -196,8 +232,9 @@ export const UploadTrackModal: React.FC<UploadTrackModalProps> = ({
         hasStems,
         hasMidi,
         isFree,
-        allowFreeDownload: isFree,
+        allowFreeDownload: isFree ? true : allowFreeDownload,
         hasWatermark,
+        duration: detectedDuration ?? undefined,
       });
     }
 
@@ -254,6 +291,29 @@ export const UploadTrackModal: React.FC<UploadTrackModalProps> = ({
               <Sparkles className="w-3.5 h-3.5 text-amber-400" />
               <span>{isAnalyzing ? 'Analizando Audio...' : '⚡ Auto-Detectar'}</span>
             </button>
+          </div>
+
+          {/* Archivo de audio (insumo del analizador; en producción se sube a Cloudflare R2) */}
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+            <label className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[#0b0d13] border border-dashed border-zinc-600 hover:border-amber-400/60 cursor-pointer text-xs text-zinc-300 transition-colors">
+              <FileAudio className="w-4 h-4 text-amber-400 flex-shrink-0" />
+              <span className="font-mono truncate max-w-[220px]">
+                {fileNameInput || 'Selecciona tu archivo WAV / MP3...'}
+              </span>
+              <input
+                type="file"
+                accept=".wav,.mp3,.aiff,.flac,audio/*"
+                className="hidden"
+                onChange={handleFileSelected}
+              />
+            </label>
+            <input
+              type="text"
+              value={fileNameInput}
+              onChange={(e) => setFileNameInput(e.target.value)}
+              placeholder="o escribe el nombre del archivo (ej: trap_beat_140bpm_Aminor.wav)"
+              className="flex-1 bg-[#0b0d13] border border-[#232a40] focus:border-amber-400 rounded-xl px-3 py-2 text-xs text-white font-mono placeholder-zinc-500 focus:outline-none"
+            />
           </div>
 
           {/* Analysis Result Banner */}
@@ -447,7 +507,7 @@ export const UploadTrackModal: React.FC<UploadTrackModalProps> = ({
           )}
 
           {/* Security & Watermark Option */}
-          <div className="p-3 rounded-2xl bg-[#121520] border border-[#232a40]">
+          <div className="p-3 rounded-2xl bg-[#121520] border border-[#232a40] space-y-3">
             <label className="flex items-start gap-2.5 cursor-pointer">
               <input
                 type="checkbox"
@@ -464,6 +524,27 @@ export const UploadTrackModal: React.FC<UploadTrackModalProps> = ({
                 </span>
               </div>
             </label>
+
+            {!isFree && (
+              <div className="pt-3 border-t border-[#232a40]">
+                <label className="flex items-start gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={allowFreeDownload}
+                    onChange={(e) => setAllowFreeDownload(e.target.checked)}
+                    className="rounded text-amber-400 focus:ring-amber-400 bg-zinc-900 border-zinc-700 mt-0.5"
+                  />
+                  <div>
+                    <span className="text-xs font-bold text-zinc-200 block">
+                      Permitir descarga de Maqueta de Composición (MP3 con marca de agua)
+                    </span>
+                    <span className="text-[11px] text-zinc-400 block mt-0.5">
+                      El "Punto Medio BeatsCloud": los artistas podrán descargar una copia acuñada no comercial para escribir y grabar sus voces antes de comprar la Licencia Comercial.
+                    </span>
+                  </div>
+                </label>
+              </div>
+            )}
           </div>
 
           {/* 4. Strict Music Details: BPM, Key, Mood */}
