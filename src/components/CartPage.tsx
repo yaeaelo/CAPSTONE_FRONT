@@ -36,24 +36,30 @@ export const CartPage: React.FC<CartPageProps> = ({
     amount: number;
   } | null>(null);
 
+  // Orden de compra FIJA al abrir la pasarela (espejo de WebpayTransaction:
+  // el buy_order se genera una vez en create() y se reutiliza hasta el commit).
+  const [pendingBuyOrder, setPendingBuyOrder] = useState<string>('');
+
   const subtotal = cart.reduce((sum, item) => sum + item.track.price, 0);
   const iva = Math.round(subtotal * 0.19);
   const total = subtotal + iva;
 
   const handleStartCheckout = () => {
+    setPendingBuyOrder('BC-' + Math.floor(100000 + Math.random() * 900000));
     setCheckoutModalOpen(true);
   };
 
   const handleConfirmWebpayPayment = () => {
     setIsProcessing(true);
     setTimeout(() => {
-      const result = checkoutCart();
+      const result = checkoutCart(pendingBuyOrder || undefined);
       setIsProcessing(false);
       if (result.success) {
         setPaymentSuccessData({
           buyOrder: result.buyOrder,
           amount: result.amount,
         });
+        setPendingBuyOrder('');
       }
     }, 1500);
   };
@@ -308,7 +314,7 @@ export const CartPage: React.FC<CartPageProps> = ({
                 </div>
                 <div className="flex justify-between">
                   <span className="text-zinc-500">Orden de Compra:</span>
-                  <span className="text-zinc-200">BC-{Math.floor(100000 + Math.random() * 900000)}</span>
+                  <span className="text-zinc-200">{pendingBuyOrder}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-zinc-500">Usuario Comprador:</span>

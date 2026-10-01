@@ -20,6 +20,7 @@ import {
   ArrowUpDown,
   Music,
   Download,
+  Mic2,
   ShieldCheck,
   Lock,
 } from 'lucide-react';
@@ -69,6 +70,7 @@ export const CatalogPage: React.FC<CatalogPageProps> = ({
     addToCart,
     toggleLike,
     claimFreeTrack,
+    downloadAuditionDemo,
     currentUser,
     globalSearchQuery,
     setGlobalSearchQuery,
@@ -108,6 +110,13 @@ export const CatalogPage: React.FC<CatalogPageProps> = ({
     a.href = url;
     a.download = `${track.title.replace(/[\s/]/g, '_')}_Demo_Gratis_BeatsCloud.txt`;
     a.click();
+  };
+
+  // "Punto Medio": descarga de maqueta de composición (MP3 acuñado) en beats de pago
+  // habilitados por el productor con allowFreeDownload.
+  const handleDownloadAudition = (e: React.MouseEvent, track: Track) => {
+    e.stopPropagation();
+    downloadAuditionDemo(track);
   };
 
   const filteredTracks = useMemo(() => {
@@ -571,14 +580,25 @@ export const CatalogPage: React.FC<CatalogPageProps> = ({
                                 <span>Descargar</span>
                               </button>
                             ) : (
-                              <button
-                                onClick={() => addToCart(track)}
-                                className="px-2.5 py-1.5 bg-amber-400 hover:bg-amber-300 text-zinc-950 font-bold rounded-lg text-xs flex items-center gap-1 shadow-sm transition-transform active:scale-95"
-                                title="Comprar / Agregar al carrito"
-                              >
-                                <ShoppingCart className="w-3 h-3" />
-                                <span>Comprar</span>
-                              </button>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  onClick={() => addToCart(track)}
+                                  className="px-2.5 py-1.5 bg-amber-400 hover:bg-amber-300 text-zinc-950 font-bold rounded-lg text-xs flex items-center gap-1 shadow-sm transition-transform active:scale-95"
+                                  title="Comprar / Agregar al carrito"
+                                >
+                                  <ShoppingCart className="w-3 h-3" />
+                                  <span>Comprar</span>
+                                </button>
+                                {track.allowFreeDownload && (
+                                  <button
+                                    onClick={(e) => handleDownloadAudition(e, track)}
+                                    className="px-2 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold rounded-lg text-xs border border-zinc-700 flex items-center gap-1 transition-colors"
+                                    title="Descargar Maqueta de Composición (MP3 con marca de agua)"
+                                  >
+                                    <Mic2 className="w-3 h-3 text-amber-400" />
+                                  </button>
+                                )}
+                              </div>
                             )
                           ) : (
                             <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950/60 px-2 py-1 rounded border border-emerald-500/30">
@@ -701,13 +721,24 @@ export const CatalogPage: React.FC<CatalogPageProps> = ({
                           <span>Descargar</span>
                         </button>
                       ) : (
-                        <button
-                          onClick={() => addToCart(track)}
-                          className="px-3 py-1.5 bg-amber-400 hover:bg-amber-300 text-zinc-950 font-bold rounded-lg text-xs flex items-center gap-1"
-                        >
-                          <ShoppingCart className="w-3.5 h-3.5" />
-                          <span>Comprar</span>
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => addToCart(track)}
+                            className="px-3 py-1.5 bg-amber-400 hover:bg-amber-300 text-zinc-950 font-bold rounded-lg text-xs flex items-center gap-1"
+                          >
+                            <ShoppingCart className="w-3.5 h-3.5" />
+                            <span>Comprar</span>
+                          </button>
+                          {track.allowFreeDownload && (
+                            <button
+                              onClick={(e) => handleDownloadAudition(e, track)}
+                              className="p-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg border border-zinc-700 flex items-center transition-colors"
+                              title="Descargar Maqueta de Composición (MP3 con marca de agua)"
+                            >
+                              <Mic2 className="w-3.5 h-3.5 text-amber-400" />
+                            </button>
+                          )}
+                        </div>
                       )
                     ) : (
                       <span className="text-xs text-emerald-400 font-bold bg-emerald-950/60 px-2 py-1 rounded border border-emerald-500/30">

@@ -1,6 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { ResourceType } from '../types';
+import { LicenseContract, ResourceType } from '../types';
+import { LicenseVerificationModal } from './LicenseVerificationModal';
+import { LicenseCertificateModal } from './LicenseCertificateModal';
 import {
   Compass,
   Disc3,
@@ -20,6 +22,7 @@ import {
   ChevronRight,
   ShieldCheck,
   UserCheck,
+  BadgeCheck,
   X,
 } from 'lucide-react';
 
@@ -50,6 +53,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
     purchases,
     tracks,
   } = useApp();
+
+  // Verificador público de licencias (registro oficial de transacciones)
+  const [verifyOpen, setVerifyOpen] = useState(false);
+  const [viewingContract, setViewingContract] = useState<LicenseContract | null>(null);
 
   const handleSelectResourceFilter = (filter: ResourceType) => {
     setActiveResourceFilter(filter);
@@ -295,6 +302,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <span>Directorio de Creadores</span>
             </button>
             <button
+              onClick={() => setVerifyOpen(true)}
+              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold transition-all mt-1 text-zinc-400 hover:text-amber-300 hover:bg-amber-400/5"
+              title="Consultar el registro oficial de licencias emitidas por Webpay"
+            >
+              <BadgeCheck className="w-4 h-4" />
+              <span>Verificar Licencia</span>
+            </button>
+            <button
               onClick={() => handleTabChange('sobre_nosotros')}
               className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold transition-all mt-1 ${
                 currentTab === 'sobre_nosotros'
@@ -308,6 +323,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Public License Verification Registry */}
+      <LicenseVerificationModal
+        isOpen={verifyOpen}
+        onClose={() => setVerifyOpen(false)}
+        onViewContract={(contract) => {
+          setVerifyOpen(false);
+          setViewingContract(contract);
+        }}
+      />
+
+      {/* Official License Certificate (from public verifier) */}
+      <LicenseCertificateModal
+        isOpen={viewingContract !== null}
+        onClose={() => setViewingContract(null)}
+        contract={viewingContract}
+      />
 
       {/* User Footer Profile & Demo Switcher */}
       <div className="p-3 border-t border-[#1a1e2b] bg-[#0a0c10]">

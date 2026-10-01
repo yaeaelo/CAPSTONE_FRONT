@@ -46,7 +46,10 @@ interface AppContextType {
   addToCart: (track: Track) => boolean;
   removeFromCart: (trackId: string) => void;
   clearCart: () => void;
-  checkoutCart: () => { success: boolean; buyOrder: string; amount: number };
+  // buyOrderOpcional: en modo real el buy_order lo emite el servidor al crear la
+  // WebpayTransaction (create) y el SPA lo reenvía al confirmar (commit). En mock
+  // se genera aquí si no se informa, imitando ese orden.
+  checkoutCart: (buyOrderOpcional?: string) => { success: boolean; buyOrder: string; amount: number };
   uploadTrack: (data: {
     title: string;
     resourceType: ResourceType;
@@ -65,6 +68,7 @@ interface AppContextType {
     isFree?: boolean;
     allowFreeDownload?: boolean;
     hasWatermark?: boolean;
+    duration?: number; // Segundos detectados del archivo subido (opcional)
   }) => Track;
   updateTrack: (trackId: string, data: Partial<Track>) => void;
   deleteTrack: (trackId: string) => void;
@@ -145,6 +149,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const currentUser = users.find((u) => u.id === currentUserId) || null;
 
+  // Regla de seguridad central: una pista está protegida (preview amortiguada,
+  // sin descarga de master) si tiene marca de agua y el usuario no la adquirió.
+  const isTrackProtected = (track: Track | null): boolean => {
+    if (!track) return false;
+    const owned = currentUser?.purchasedTrackIds.includes(track.id) ?? false;
+    if (owned) return false;
+    if (track.isFree || track.price === 0) return false; // Beats gratis: demo libre sin protección
+    return track.hasWatermark ?? true;
+  };
+
   // Persist to localStorage
   useEffect(() => {
     localStorage.setItem('bc_users', JSON.stringify(users));
@@ -184,6 +198,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const playTrack = (track: Track) => {
+    // Seguridad de preescucha: amortiguar la preview si la pista no fue adquirida.
+    audioEngine.setPreviewSecurityMode(isTrackProtected(track));
+
     if (activeTrack?.id === track.id) {
       if (isPlaying) {
         audioEngine.pause();
@@ -203,6 +220,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       return;
     }
+    audioEngine.setPreviewSecurityMode(isTrackProtected(activeTrack));
     if (isPlaying) {
       audioEngine.pause();
     } else {
@@ -261,7 +279,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCart([]);
   };
 
-  const checkoutCart = () => {
+  const checkoutCart = (buyOrderOpcional?: string) => {
     if (!currentUser || cart.length === 0) {
       return { success: false, buyOrder: '', amount: 0 };
     }
@@ -269,12 +287,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const subtotal = cart.reduce((acc, item) => acc + item.track.price, 0);
     const iva = Math.round(subtotal * 0.19);
     const totalAmount = subtotal + iva;
-    const buyOrder = 'BC-' + Math.floor(100000 + Math.random() * 900000);
+    // Espejo del flujo real: el buy_order nace con la transacción Webpay (create)
+    // y se reutiliza idéntico en compras, ventas y recibo (commit).
+    const buyOrder = buyOrderOpcional || 'BC-' + Math.floor(100000 + Math.random() * 900000);
     const today = new Date().toISOString().split('T')[0];
 
     const purchasedIds = cart.map((item) => item.track.id);
 
-    // Record sales (aligned with Django HistorialVenta)
+    // Alineado con HistorialVenta de Django: precio neto del track (sin IVA),
+    // igual que views.py -> HistorialVenta.objects.create(precio=venta.track.precio)
     const newSales: SaleRecord[] = cart.map((item) => {
       const code = 'LIC-' + buyOrder;
       const hash = 'SHA256:' + Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2);
@@ -294,7 +315,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
     });
 
-    // Record purchases (aligned with Django HistorialCompra)
+    // Alineado con HistorialCompra de Django: precio neto del track (sin IVA).
+    // El monto TOTAL cobrado a Webpay (subtotal + IVA) se reporta aparte en
+    // WebpayTransaction.amount y queda disponible como webpayAmount en el recibo.
     const newPurchases: PurchaseRecord[] = cart.map((item) => {
       const code = 'LIC-' + buyOrder;
       const hash = 'SHA256:' + Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2);
@@ -310,6 +333,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         licenseCode: code,
         verificationHash: hash,
         licenseType: 'comercial_wav_stems',
+        webpayAmount: totalAmount, // lo que efectivamente autorizó Transbank
       };
     });
 
@@ -349,6 +373,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     isFree?: boolean;
     allowFreeDownload?: boolean;
     hasWatermark?: boolean;
+    duration?: number; // Segundos. Si no se informa, se usa la maqueta por defecto (180s)
   }): Track => {
     const id = 'track_' + Date.now();
     const isFree = data.isFree ?? (data.price === 0);
@@ -368,7 +393,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       bpm: data.bpm || 130,
       scaleKey: data.scaleKey || 'C Minor',
       mood: data.mood || 'Oscuro',
-      duration: 180,
+      duration: data.duration && data.duration > 0 ? data.duration : 180,
       likesCount: 0,
       tags: [data.genre, data.resourceType, `${data.bpm} BPM`, data.mood, ...(isFree ? ['Free', 'Gratis'] : [])],
       audioBeatType: data.audioBeatType || 'trap',

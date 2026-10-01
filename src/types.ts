@@ -155,6 +155,7 @@ export interface PurchaseRecord {
   licenseCode?: string;
   verificationHash?: string;
   licenseType?: 'comercial_wav_stems' | 'exclusiva' | 'maqueta_ensayo';
+  webpayAmount?: number; // Total autorizado por Transbank (precio + IVA), espejo de WebpayTransaction.amount
 }
 
 export interface WebpayTransactionRecord {

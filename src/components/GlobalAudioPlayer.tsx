@@ -174,7 +174,12 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({ onOpenTrac
               <Lock className="w-3 h-3" />
               <span>Tag Protegido</span>
             </span>
-          ) : null}
+          ) : (
+            <span className="hidden sm:inline-flex items-center gap-1 text-[10px] font-mono font-bold text-sky-400 bg-sky-950/60 border border-sky-500/30 px-2 py-1 rounded-lg" title="Pista de pago sin marca de agua: preescucha completa autorizada por el productor">
+              <Music2 className="w-3 h-3" />
+              <span>Preview Full</span>
+            </span>
+          )}
 
           {/* Action Button */}
           {!isPurchased ? (

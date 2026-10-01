@@ -25,4 +25,22 @@ BeatsCloud es una plataforma web para la publicación, búsqueda, compra y venta
 - **Frontend:** React 19 + TypeScript + Vite
 - **Estilos:** Tailwind CSS v4 + Lucide Icons
 - **Audio:** Web Audio API (secuenciador y motor procedural de audio)
-- **Ejecución:** Node.js 22 (`npm run dev` en puerto 3000)
+- **Ejecución:** Node.js ≥ 18 (`npm run dev` en puerto 3000)
+
+## ⚡ Cómo ejecutarla (primera vez)
+
+```bash
+cd <carpeta-del-proyecto>   # donde está package.json
+npm install                 # OBLIGATORIO la primera vez (crea node_modules/ con vite, react...)
+npm run dev                 # abre http://localhost:3000
+```
+
+> Si `npm run dev` falla con **"vite: orden no encontrada"**, es porque falta `npm install` en esa máquina/carpeta. `node_modules/` a propósito NO se sube al repositorio.
+
+## 📖 Documentación completa del sistema
+
+- **[docs/DOCUMENTACION_SISTEMA.md](docs/DOCUMENTACION_SISTEMA.md)** — arquitectura, modelo de datos (equivalencia con Django), lógica de negocio (seguridad de preview, comercio Webpay, licencias), instrucciones de instalación y **plan de prueba guiado paso a paso para demostrar el avance al grupo**.
+
+## ✅ Estado actual (Alpha Frontend)
+
+Sistema navegable completo: catálogo con filtros por tipo de recurso (instrumental/loop/acapella/drumkit con tags de color), reproductor global sintetizado con visualizer, **seguridad real de preescucha** (atenuación de pistas no adquiridas), carrito + checkout Webpay simulado (subtotal + IVA 19%), certificados de licencia con hash verificable, verificador público de licencias, subida con analizador acústico de fallback, perfiles productor/artista, favoritos, comentarios y suscripciones VIP. Backend Django/R2/Webpay real pendiente de credenciales (modelos ya alineados a las tablas originales).
