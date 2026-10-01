@@ -3,11 +3,7 @@ node_modules/
 
 # Build artifacts
 dist/
-
-# TypeScript incremental build info
 *.tsbuildinfo
-
-# Entorno / credenciales (nunca subir)
-.env
-.env.local
-.env.*.local
+# OS/editor
+.DS_Store
+Thumbs.db

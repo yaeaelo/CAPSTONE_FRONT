@@ -46,7 +46,10 @@ interface AppContextType {
   addToCart: (track: Track) => boolean;
   removeFromCart: (trackId: string) => void;
   clearCart: () => void;
-  checkoutCart: () => { success: boolean; buyOrder: string; amount: number };
+  // buyOrderOpcional: en modo real el buy_order lo emite el servidor al crear la
+  // WebpayTransaction (create) y el SPA lo reenvía al confirmar (commit). En mock
+  // se genera aquí si no se informa, imitando ese orden.
+  checkoutCart: (buyOrderOpcional?: string) => { success: boolean; buyOrder: string; amount: number };
   uploadTrack: (data: {
     title: string;
     resourceType: ResourceType;
@@ -276,7 +279,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCart([]);
   };
 
-  const checkoutCart = () => {
+  const checkoutCart = (buyOrderOpcional?: string) => {
     if (!currentUser || cart.length === 0) {
       return { success: false, buyOrder: '', amount: 0 };
     }
@@ -284,12 +287,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const subtotal = cart.reduce((acc, item) => acc + item.track.price, 0);
     const iva = Math.round(subtotal * 0.19);
     const totalAmount = subtotal + iva;
-    const buyOrder = 'BC-' + Math.floor(100000 + Math.random() * 900000);
+    // Espejo del flujo real: el buy_order nace con la transacción Webpay (create)
+    // y se reutiliza idéntico en compras, ventas y recibo (commit).
+    const buyOrder = buyOrderOpcional || 'BC-' + Math.floor(100000 + Math.random() * 900000);
     const today = new Date().toISOString().split('T')[0];
 
     const purchasedIds = cart.map((item) => item.track.id);
 
-    // Record sales (aligned with Django HistorialVenta)
+    // Alineado con HistorialVenta de Django: precio neto del track (sin IVA),
+    // igual que views.py -> HistorialVenta.objects.create(precio=venta.track.precio)
     const newSales: SaleRecord[] = cart.map((item) => {
       const code = 'LIC-' + buyOrder;
       const hash = 'SHA256:' + Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2);
@@ -309,7 +315,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
     });
 
-    // Record purchases (aligned with Django HistorialCompra)
+    // Alineado con HistorialCompra de Django: precio neto del track (sin IVA).
+    // El monto TOTAL cobrado a Webpay (subtotal + IVA) se reporta aparte en
+    // WebpayTransaction.amount y queda disponible como webpayAmount en el recibo.
     const newPurchases: PurchaseRecord[] = cart.map((item) => {
       const code = 'LIC-' + buyOrder;
       const hash = 'SHA256:' + Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2);
@@ -325,6 +333,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         licenseCode: code,
         verificationHash: hash,
         licenseType: 'comercial_wav_stems',
+        webpayAmount: totalAmount, // lo que efectivamente autorizó Transbank
       };
     });
 
