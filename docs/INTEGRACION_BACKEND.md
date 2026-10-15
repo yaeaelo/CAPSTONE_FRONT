@@ -82,9 +82,11 @@ WebpayTransaction.status→state ('AUTHORIZED (Código 0)' en receipt)
 
 ## 4. Cómo correr ambos lado a lado (hoy)
 
+> **Actualización (Sprint 1):** el backend de Felipe ya NO se clapa aparte — vive en `server/` dentro de este repo tras el merge. El frontend vive en `client/`.
+
 ```bash
-# Terminal 1 — Backend de Felipe (Python 3.12+, PostgreSQL)
-git clone https://github.com/felipe-urtubia/BeatsCloud.git BeatCloud && cd BeatCloud
+# Terminal 1 — Backend Django (Python 3.12+, PostgreSQL)
+cd server
 python -m venv .venv && source .venv/bin/activate        # Windows: .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 cp .env.example .env    # crear con DB_NAME=beatsbd, DB_USER, DB_PASSWORD, TRANSBANK_* (claves TEST públicas)
@@ -93,9 +95,11 @@ python manage.py migrate && python manage.py createsuperuser
 sudo apt install ffmpeg                                     # necesario para previews
 python manage.py runserver 8000
 
-# Terminal 2 — Frontend React (este repo)
-npm install
-VITE_API_MODE=mock npm run dev      # demo sin backend (default)
+# Terminal 2 — Frontend React (⚠️ package.json está en client/, NO en la raíz del repo)
+cd client
+npm install                 # primera vez (evita el error ENOENT de package.json)
+npm run dev                 # http://localhost:3000 — proxy /api y /media → Django:8000
+# Demo sin backend: VITE_API_MODE=mock npm run dev
 ```
 
 ⚠️ **Sin CORS en Django**: el modo `django-html` solo funciona si serve también los templates de Felipe o si agregamos la Fase B. Por eso el adaptador hoy deja el esqueleto y el default sigue siendo `mock`.

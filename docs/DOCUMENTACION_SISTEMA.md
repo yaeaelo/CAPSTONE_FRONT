@@ -138,8 +138,8 @@ isTrackProtected(track) = track.hasWatermark && !usuarioLaAdquirió && !track.is
 
 ```bash
 git clone <repo>            # o descargar zip
-cd beatscloud               # (o la carpeta donde descomprimiste, ej. CAPSTONE_PRIV-main)
-npm install                 # instala vite, react, tailwind, etc. en ./node_modules
+cd beatscloud/client        # ⚠️ el package.json vive en client/, NO en la raíz del repo
+npm install                 # instala vite, react, tailwind, etc. en client/node_modules
 npm run dev                 # http://localhost:3000
 ```
 
