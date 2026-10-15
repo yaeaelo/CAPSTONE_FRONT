@@ -24,7 +24,11 @@ export function Catalog() {
       setPlayingId(null);
     } else {
       audio?.pause();
-      const newAudio = new Audio(track.previewUrl || track.audioUrl);
+      // previewSrc/fullSrc los inyecta mapTrack() (rutas /api/track/<id>/preview|reproducir de Django).
+      const src = (track as Track & { previewSrc?: string; fullSrc?: string }).previewSrc
+        ?? (track as Track & { fullSrc?: string }).fullSrc;
+      if (!src) return;
+      const newAudio = new Audio(src);
       newAudio.play().catch(e => console.log('Audio error:', e));
       newAudio.onended = () => setPlayingId(null);
       setAudio(newAudio);

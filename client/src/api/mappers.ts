@@ -13,6 +13,10 @@ const DJANGO_BASE: string = (((import.meta as any).env?.VITE_DJANGO_URL as strin
 /** Rutas protegidas confirmadas en app/urls.py — el <audio> apunta aquí, no a /media/. */
 export const audioFullUrl = (idTrack: number) => `${DJANGO_BASE}/track/${idTrack}/reproducir/`;
 export const audioPreviewUrl = (idTrack: number) => `${DJANGO_BASE}/track/${idTrack}/preview/`;
+// Espejo de las rutas que expone api_shim.py para el SPA (prefijo /api/)
+export const apiAudioFullUrl = (idTrack: number) => `${DJANGO_BASE}/api/track/${idTrack}/reproducir/`;
+export const apiAudioPreviewUrl = (idTrack: number) => `${DJANGO_BASE}/api/track/${idTrack}/preview/`;
+export const apiDownloadUrl = (idTrack: number) => `${DJANGO_BASE}/api/track/${idTrack}/descargar/`;
 export const mediaUrl = (path: string | null): string | null =>
   path ? (path.startsWith('http') ? path : `${DJANGO_BASE}${path.startsWith('/') ? '' : '/'}${path}`) : null;
 
@@ -76,10 +80,12 @@ export function mapTrack(d: DTrack, opts?: { isPurchased?: boolean; isOwner?: bo
     hasWatermark: !(opts?.isPurchased || opts?.isOwner || free),
     comments: [],
     createdAt: new Date().toISOString(),
-    // Extensión opcional propia del frontend para el motor de reproducción:
-    ...(d.preview ? { previewSrc: audioPreviewUrl(d.id_track) } : {}),
-    ...(d.track ? { fullSrc: audioFullUrl(d.id_track) } : {}),
-  } as Track & { previewSrc?: string; fullSrc?: string };
+    // Extensión opcional propia del frontend para el motor de reproducción.
+    // Apuntan a las rutas /api/track/<id>/... que expone api_shim.py (Fase B):
+    // el preview es abierto a anónimos; reproducir/descargar tienen guarda server-side.
+    ...(d.preview ? { previewSrc: apiAudioPreviewUrl(d.id_track) } : {}),
+    ...(d.track ? { fullSrc: apiAudioFullUrl(d.id_track), downloadSrc: apiDownloadUrl(d.id_track) } : {}),
+  } as Track & { previewSrc?: string; fullSrc?: string; downloadSrc?: string };
 }
 
 /** Aproximación hasta que audioAnalyzer corra sobre el archivo real subido. */
