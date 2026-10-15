@@ -1,6 +1,16 @@
 // Web Audio Engine for BeatsCloud with procedural drum machines, synths and rhythmic sequencers
 
+/** Modo de reproducción:
+ *  - 'synth' (default / demo): secuenciador procedural — funciona sin backend.
+ *  - 'file': reproduce el audio REAL servido por Django (/api/track/<id>/preview/
+ *    o /reproducir/). Es el modo "punto medio" para el Sprint 1: la UI es la misma,
+ *    pero suena el archivo auténtico con la seguridad server-side de preview. */
+export type PlaybackMode = 'synth' | 'file';
+
 class BeatsAudioEngine {
+  private mode: PlaybackMode = 'synth';
+  private audioEl: HTMLAudioElement | null = null;
+  private audioUrl: string | null = null;
   private ctx: AudioContext | null = null;
   private isPlaying: boolean = false;
   private currentPattern: string = 'trap';
@@ -107,11 +117,98 @@ class BeatsAudioEngine {
       this.onPlayStateChangeCallback(true);
     }
 
+    if (this.mode === 'file' && this.audioEl) {
+      // Audio real servido por Django. El volumen y la atenuación de preescucha
+      // (setPreviewSecurityMode/setVolume) se aplican vía MediaStreamSource en la
+      // misma cadena master -> previewGain -> analyser -> destination.
+      this.audioEl.play().catch(() => {
+        /* autoplay bloqueado: el usuario ya interactuó al hacer click */
+      });
+      return;
+    }
+
     this.startSequencer();
+  }
+
+  /** Cambia el motor: 'file' usa el audio real de Django; 'synth' el secuenciador procedural. */
+  public setPlaybackMode(mode: PlaybackMode) {
+    if (this.mode === mode) return;
+    this.mode = mode;
+    if (mode === 'synth' && this.audioEl) {
+      this.audioEl.pause();
+    } else if (mode === 'file' && !this.audioEl) {
+      this.buildAudioElement();
+    }
+    if (this.isPlaying && this.activeTrackId) {
+      // Re-arrancar el motor correcto sin cambiar la canción activa
+      const t = this.currentTime;
+      this.isPlaying = false;
+      if (this.timerId !== null) {
+        clearInterval(this.timerId);
+        this.timerId = null;
+      }
+      this.isPlaying = true;
+      if (this.mode === 'file' && this.audioEl) {
+        this.audioEl.currentTime = Math.min(t, this.duration);
+        this.audioEl.play().catch(() => {});
+      } else {
+        this.startSequencer();
+      }
+    }
+  }
+
+  public getPlaybackMode(): PlaybackMode {
+    return this.mode;
+  }
+
+  /** Asigna la URL del archivo real (preview o full según seguridad server-side). */
+  public setAudioSource(url: string | null) {
+    this.audioUrl = url;
+    if (this.audioEl) {
+      if (url) {
+        this.audioEl.src = url;
+      } else {
+        this.audioEl.removeAttribute('src');
+      }
+    }
+  }
+
+  private buildAudioElement() {
+    const el = new Audio();
+    el.crossOrigin = 'anonymous';
+    el.preload = 'auto';
+    if (this.audioUrl) el.src = this.audioUrl;
+
+    // Enrutamos el elemento por la misma cadena de efectos para conservar
+    // visualizer (analyser) y la atenuación de preescucha no adquirida.
+    const attach = () => {
+      if (!this.ctx || !this.previewGain) return;
+      try {
+        const srcNode = this.ctx.createMediaElementSource(el);
+        srcNode.connect(this.masterGain!);
+      } catch {
+        /* createMediaElementSource solo permite una vez por elemento */
+      }
+    };
+    el.addEventListener('loadedmetadata', () => {
+      if (Number.isFinite(el.duration) && el.duration > 0) this.duration = el.duration;
+      attach();
+    });
+    el.addEventListener('timeupdate', () => {
+      this.currentTime = el.currentTime;
+      if (this.onTimeUpdateCallback) this.onTimeUpdateCallback(this.currentTime, this.duration);
+    });
+    el.addEventListener('ended', () => {
+      this.isPlaying = false;
+      this.currentTime = 0;
+      if (this.onPlayStateChangeCallback) this.onPlayStateChangeCallback(false);
+    });
+    this.audioEl = el;
   }
 
   public pause() {
     this.isPlaying = false;
+    if (this.audioEl) this.audioEl.pause();
     if (this.timerId !== null) {
       clearInterval(this.timerId);
       this.timerId = null;
@@ -123,6 +220,9 @@ class BeatsAudioEngine {
 
   public seek(seconds: number) {
     this.currentTime = Math.max(0, Math.min(this.duration, seconds));
+    if (this.mode === 'file' && this.audioEl && Number.isFinite(this.audioEl.duration)) {
+      this.audioEl.currentTime = this.currentTime;
+    }
     if (this.onTimeUpdateCallback) {
       this.onTimeUpdateCallback(this.currentTime, this.duration);
     }

@@ -20,6 +20,25 @@ import {
   INITIAL_PURCHASES,
 } from '../data/mockData';
 import { audioEngine } from '../utils/audioEngine';
+import DjangoApi from '../api/django.service';
+import { mapTrack, mapUser, djangoId } from '../api/mappers';
+
+/**
+ * MODO DE INTEGRACIÓN — "punto medio" para el Sprint 1 (ver docs/INTEGRACION_BACKEND.md):
+ *   mock   → todo localStorage (demo sin backend, plan de respaldo si falla la red)
+ *   hybrid → DATOS REALES del backend Django (catálogo, sesión, carrito con IVA
+ *            server-side, likes, comentarios, Webpay create→redirect) sobre la UI
+ *            existente. Las mutaciones que aún no tienen endpoint (registro con
+ *            correo, subida con FFmpeg) siguen en local y se marcan en la UI.
+ * Se selecciona con VITE_API_MODE (default: 'hybrid'). Si el backend no responde
+ * al arrancar, el provider CAE automáticamente a 'mock' para no romper la demo.
+ */
+export type ApiMode = 'mock' | 'hybrid';
+const CONFIGURED_MODE: ApiMode =
+  ((import.meta.env.VITE_API_MODE as string | undefined) || 'hybrid') === 'mock' ? 'mock' : 'hybrid';
+
+// Extensión interna del Track para URLs de audio real (la inyecta mappers.mapTrack)
+type TrackWithSrc = Track & { previewSrc?: string; fullSrc?: string; downloadSrc?: string };
 
 interface AppContextType {
   currentUser: User | null;
@@ -80,10 +99,16 @@ interface AppContextType {
   addComment: (trackId: string, content: string) => void;
   deleteComment: (trackId: string, commentId: string) => void;
   switchUser: (userId: string) => void;
-  login: (username: string) => boolean;
+  login: (username: string, password?: string) => boolean;
+  logout: () => void;
   registerUser: (username: string, email: string, artistName: string, role: UserType) => User;
   updateProfile: (data: Partial<User>) => void;
   subscribeToProducer: (sub: ProducerSubscription) => boolean;
+  // ---- Integración backend (Sprint 1, modo hybrid) ----
+  apiMode: ApiMode;            // modo efectivo tras el bootstrap (hybrid o mock si cayó)
+  backendStatus: 'idle' | 'checking' | 'online' | 'offline';
+  isSyncing: boolean;          // hay una petición al backend en curso
+  refreshFromBackend: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -149,6 +174,105 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const currentUser = users.find((u) => u.id === currentUserId) || null;
 
+  // ==== Estado de integración con el backend Django (modo hybrid) ====
+  const [apiMode, setApiMode] = useState<ApiMode>(CONFIGURED_MODE);
+  const [backendStatus, setBackendStatus] = useState<'idle' | 'checking' | 'online' | 'offline'>('idle');
+  const [isSyncing, setIsSyncing] = useState(false);
+  const modeRef = React.useRef<ApiMode>(CONFIGURED_MODE);
+  modeRef.current = apiMode;
+  // Carrito real: mapa trackId UI -> ventaId de Django (DELETE /api/carrito/<venta_id>/)
+  const cartVentaIds = React.useRef<Record<string, number>>({});
+
+  /** Marca "syncing" alrededor de una llamada al backend. */
+  const withSync = async <T,>(fn: () => Promise<T>): Promise<T> => {
+    setIsSyncing(true);
+    try {
+      return await fn();
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  /** Hidrata catálogo + sesión + carrito desde Django. Si falla en el bootstrap, cae a mock. */
+  const loadFromBackend = async (bootstrap: boolean) => {
+    try {
+      const [page, session] = await Promise.all([DjangoApi.catalogo({ page: 1 }), DjangoApi.getSession()]);
+      const comprados = new Set(page.tracks_comprados.map((n) => `dj-${n}`));
+      const mapped = page.tracks.map((dt) =>
+        mapTrack(dt, { isPurchased: comprados.has(`dj-${dt.id_track}`), isOwner: !!session && dt.usuario.username === session.username }),
+      ) as TrackWithSrc[];
+
+      setTracks(mapped);
+
+      if (session) {
+        const uiUser = mapUser(session);
+        uiUser.purchasedTrackIds = Array.from(comprados);
+        setUsers((prev) => {
+          const exists = prev.some((u) => u.id === uiUser.id);
+          return exists ? prev.map((u) => (u.id === uiUser.id ? { ...uiUser, likedTrackIds: u.likedTrackIds } : u)) : [...prev, uiUser];
+        });
+        setCurrentUserId(uiUser.id);
+        localStorage.setItem('bc_session_user_id', uiUser.id);
+      } else {
+        localStorage.removeItem('bc_session_user_id');
+      }
+
+      // Carrito persistente del servidor (Venta.completada=False, IVA server-side)
+      const cartRes = await DjangoApi.carrito();
+      const byId = new Map(mapped.map((t) => [t.id, t]));
+      const items = cartRes.items
+        .map((v) => {
+          const t = byId.get(`dj-${v.track}`);
+          cartVentaIds.current[t!.id] = v.id;
+          return t ? { track: t, addedAt: v.fecha } : null;
+        })
+        .filter((x): x is CartItem => x !== null);
+      setCart(items);
+
+      setBackendStatus('online');
+      setApiMode('hybrid');
+      audioEngine.setPlaybackMode('file');
+    } catch (e) {
+      if (bootstrap) {
+        // El backend no está disponible: seguimos la demo en modo mock sin romper nada.
+        // eslint-disable-next-line no-console
+        console.warn('[BeatsCloud] Backend no disponible, fallback a modo mock:', e);
+        setApiMode('mock');
+        setBackendStatus('offline');
+        audioEngine.setPlaybackMode('synth');
+      } else {
+        setBackendStatus('offline');
+        throw e;
+      }
+    }
+  };
+
+  // Bootstrap: intentamos conectar una vez al montar (solo si el modo configurado es hybrid)
+  useEffect(() => {
+    if (CONFIGURED_MODE === 'hybrid') {
+      setBackendStatus('checking');
+      loadFromBackend(true);
+    } else {
+      audioEngine.setPlaybackMode('synth');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Al pagar en Webpay, Django redirige de vuelta con ?pago=exito|fracaso|cancelado:
+  // re-hidratamos para que HistorialCompra/Venta ya reflejen la compra autorizada.
+  useEffect(() => {
+    if (modeRef.current !== 'hybrid') return;
+    const params = new URLSearchParams(window.location.search);
+    const pago = params.get('pago');
+    if (pago) {
+      window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
+      loadFromBackend(false).catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const refreshFromBackend = () => withSync(() => loadFromBackend(false));
+
   // Regla de seguridad central: una pista está protegida (preview amortiguada,
   // sin descarga de master) si tiene marca de agua y el usuario no la adquirió.
   const isTrackProtected = (track: Track | null): boolean => {
@@ -200,6 +324,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const playTrack = (track: Track) => {
     // Seguridad de preescucha: amortiguar la preview si la pista no fue adquirida.
     audioEngine.setPreviewSecurityMode(isTrackProtected(track));
+
+    // En modo real, el <audio> apunta al archivo auténtico de Django:
+    // reproducir completo solo si es gratis/dueño/comprado (la guarda vive
+    // server-side en /api/track/<id>/reproducir/); si no, suena el preview 30s.
+    if (modeRef.current === 'hybrid') {
+      const t = track as TrackWithSrc;
+      const src = !isTrackProtected(track) && t.fullSrc ? t.fullSrc : t.previewSrc ?? t.fullSrc ?? null;
+      audioEngine.setAudioSource(src);
+    }
 
     if (activeTrack?.id === track.id) {
       if (isPlaying) {
@@ -257,6 +390,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           : t
       )
     );
+
+    // Modo real: espejar en /api/like/<id>/ (optimista arriba, revert si falla)
+    if (modeRef.current === 'hybrid' && trackId.startsWith('dj-')) {
+      withSync(() => DjangoApi.toggleLike(djangoId(trackId)))
+        .then((res) => {
+          if (res.liked !== !isLiked) {
+            // El servidor dice lo contrario: revertir UI
+            toggleLikeServerRollback(trackId, isLiked);
+          }
+        })
+        .catch(() => toggleLikeServerRollback(trackId, isLiked));
+    }
+  };
+
+  const toggleLikeServerRollback = (trackId: string, wasLiked: boolean) => {
+    setUsers((prev) =>
+      prev.map((u) =>
+        u.id === currentUser?.id
+          ? {
+              ...u,
+              likedTrackIds: wasLiked
+                ? [...new Set([...u.likedTrackIds, trackId])]
+                : u.likedTrackIds.filter((id) => id !== trackId),
+            }
+          : u
+      )
+    );
+    setTracks((prev) =>
+      prev.map((t) => (t.id === trackId ? { ...t, likesCount: wasLiked ? t.likesCount + 1 : Math.max(0, t.likesCount - 1) } : t))
+    );
   };
 
   const addToCart = (track: Track): boolean => {
@@ -267,12 +430,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (alreadyInCart) {
       return false;
     }
+
+    if (modeRef.current === 'hybrid' && track.id.startsWith('dj-')) {
+      // Fuente de verdad: Venta server-side con IVA calculado por Django.
+      withSync(() => DjangoApi.addToCart(djangoId(track.id)))
+        .then((venta) => {
+          cartVentaIds.current[track.id] = venta.id;
+          setCart((prev) =>
+            prev.some((i) => i.track.id === track.id) ? prev : [...prev, { track, addedAt: venta.fecha }]
+          );
+        })
+        .catch((e) => {
+          // 409 duplicado/recompra, 401 sin sesión: no agregamos nada.
+          console.warn('[BeatsCloud] No se pudo agregar al carrito:', e);
+        });
+      return true;
+    }
+
     setCart((prev) => [...prev, { track, addedAt: new Date().toISOString() }]);
     return true;
   };
 
   const removeFromCart = (trackId: string) => {
+    const ventaId = cartVentaIds.current[trackId];
     setCart((prev) => prev.filter((item) => item.track.id !== trackId));
+    delete cartVentaIds.current[trackId];
+    if (modeRef.current === 'hybrid' && ventaId != null) {
+      withSync(() => DjangoApi.removeFromCart(ventaId)).catch((e) =>
+        console.warn('[BeatsCloud] No se pudo quitar del carrito (server):', e),
+      );
+    }
   };
 
   const clearCart = () => {
@@ -282,6 +469,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const checkoutCart = (buyOrderOpcional?: string) => {
     if (!currentUser || cart.length === 0) {
       return { success: false, buyOrder: '', amount: 0 };
+    }
+
+    // ==== Modo real (Sprint 1): iniciar Webpay PLUS contra Django ====
+    // El SPA SOLO inicia la transacción; el commit y toda la validación
+    // (response_code==0, AUTHORIZED, buy_order, monto, session_id) viven en la
+    // vista exito_carrito() de Felipe. Aquí redirigimos el navegador a url_webpay.
+    if (modeRef.current === 'hybrid') {
+      withSync(() => DjangoApi.initPago())
+        .then((pago) => {
+          window.location.href = pago.url_webpay;
+        })
+        .catch((e) => {
+          console.warn('[BeatsCloud] No se pudo iniciar el pago Webpay:', e);
+          alert(`No fue posible iniciar el pago: ${(e as Error).message}`);
+        });
+      // Transacción pendiente en servidor; al volver del retorno se re-hidrata todo.
+      return { success: true, buyOrder: 'WEBPAY-PENDING', amount: 0 };
     }
 
     const subtotal = cart.reduce((acc, item) => acc + item.track.price, 0);
@@ -453,9 +657,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (activeTrack?.id === trackId) {
       setActiveTrack((prev) => (prev ? { ...prev, ...data } : null));
     }
+    // Modo real: PATCH /api/track/<id>/ — Django solo acepta nombre/precio/descripción.
+    if (modeRef.current === 'hybrid' && trackId.startsWith('dj-')) {
+      const body: Record<string, unknown> = {};
+      if (data.title !== undefined) body.nombre_track = data.title;
+      if (data.price !== undefined) body.precio = data.price;
+      if (data.description !== undefined) body.descripcion = data.description;
+      if (Object.keys(body).length > 0) {
+        withSync(() => DjangoApi.updateTrack(djangoId(trackId), body as never)).catch((e) =>
+          console.warn('[BeatsCloud] No se pudo actualizar el track en el servidor:', e),
+        );
+      }
+    }
   };
 
   const deleteTrack = (trackId: string) => {
+    // Modo real: POST /api/track/<id>/delete/ — el servidor responde 409 si ya tiene ventas.
+    if (modeRef.current === 'hybrid' && trackId.startsWith('dj-')) {
+      withSync(() => DjangoApi.deleteTrack(djangoId(trackId)))
+        .then(() => {
+          setTracks((prev) => prev.filter((t) => t.id !== trackId));
+          if (activeTrack?.id === trackId) {
+            audioEngine.pause();
+            setActiveTrack(null);
+          }
+          setCart((prev) => prev.filter((item) => item.track.id !== trackId));
+        })
+        .catch((e) => alert((e as Error).message || 'No se pudo eliminar el track.'));
+      return;
+    }
+
     setTracks((prev) => prev.filter((t) => t.id !== trackId));
     if (activeTrack?.id === trackId) {
       audioEngine.pause();
@@ -482,6 +713,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (activeTrack?.id === trackId) {
       setActiveTrack((prev) => (prev ? { ...prev, comments: [...prev.comments, newComment] } : null));
     }
+
+    // Modo real: persistir en Comentario de Django y re-sincronizar los comentarios
+    // del track para reflejar los que ya existían en el servidor.
+    if (modeRef.current === 'hybrid' && trackId.startsWith('dj-')) {
+      withSync(async () => {
+        await DjangoApi.addComment(djangoId(trackId), content.trim());
+        const list = await DjangoApi.comentarios(djangoId(trackId));
+        const mapped = list.map((c) => ({
+          id: `cm-${c.id}`,
+          userId: String(c.usuario.id),
+          username: c.usuario.username,
+          userAvatar: `https://api.dicebear.com/7.x/shapes/svg?seed=${c.usuario.username}`,
+          content: c.contenido,
+          createdAt: c.fecha_creacion,
+        }));
+        setTracks((prev) => prev.map((t) => (t.id === trackId ? { ...t, comments: mapped } : t)));
+        setActiveTrack((prev) => (prev && prev.id === trackId ? { ...prev, comments: mapped } : prev));
+      }).catch((e) => console.warn('[BeatsCloud] No se pudo guardar el comentario:', e));
+    }
   };
 
   const deleteComment = (trackId: string, commentId: string) => {
@@ -498,10 +748,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const switchUser = (userId: string) => {
+    // En modo real la sesión la manda Django: no se puede "saltar" de usuario.
+    if (modeRef.current === 'hybrid') return;
     setCurrentUserId(userId);
   };
 
-  const login = (username: string): boolean => {
+  /**
+   * Login: en modo hybrid usa la sesión de Django (POST /api/auth/login/ con CSRF).
+   * Devuelve el mensaje de error del servidor ('' si ok, null = credenciales locales inválidas).
+   */
+  const login = (username: string, password?: string): boolean => {
+    if (modeRef.current === 'hybrid') {
+      if (!password) return false; // la UI debe pedir clave cuando hay backend
+      withSync(() => DjangoApi.login(username, password))
+        .then(async (dUser) => {
+          const uiUser = mapUser(dUser);
+          setUsers((prev) => (prev.some((u) => u.id === uiUser.id) ? prev.map((u) => (u.id === uiUser.id ? uiUser : u)) : [...prev, uiUser]));
+          setCurrentUserId(uiUser.id);
+          await loadFromBackend(false); // re-hidratar catálogo/carrito con la sesión nueva
+        })
+        .catch((e) => alert((e as Error).message || 'No fue posible iniciar sesión.'));
+      return true;
+    }
     const user = users.find(
       (u) => u.username.toLowerCase() === username.toLowerCase() || u.email.toLowerCase() === username.toLowerCase()
     );
@@ -510,6 +778,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return true;
     }
     return false;
+  };
+
+  const logout = () => {
+    if (modeRef.current === 'hybrid') {
+      withSync(() => DjangoApi.logout())
+        .then(() => loadFromBackend(false))
+        .catch(() => {});
+      return;
+    }
+    localStorage.removeItem('bc_current_user_id');
+    setCurrentUserId('');
   };
 
   const registerUser = (
@@ -757,9 +1036,14 @@ BeatsCloud Chile SpA · Regularizando la música en Chile y Latinoamérica.
         deleteComment,
         switchUser,
         login,
+        logout,
         registerUser,
         updateProfile,
         subscribeToProducer,
+        apiMode,
+        backendStatus,
+        isSyncing,
+        refreshFromBackend,
       }}
     >
       {children}
