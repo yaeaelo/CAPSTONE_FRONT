@@ -132,13 +132,17 @@ class BeatsAudioEngine {
 
   /** Cambia el motor: 'file' usa el audio real de Django; 'synth' el secuenciador procedural. */
   public setPlaybackMode(mode: PlaybackMode) {
-    if (this.mode === mode) return;
+    const changed = this.mode !== mode;
     this.mode = mode;
+    // Idempotente: el elemento <audio> se construye SIEMPRE que falte (no solo
+    // cuando cambia el modo), para garantizar que en modo 'file' exista y suene
+    // el mp3 real de Django aunque setAudioSource() se haya llamado antes.
     if (mode === 'synth' && this.audioEl) {
       this.audioEl.pause();
     } else if (mode === 'file' && !this.audioEl) {
       this.buildAudioElement();
     }
+    if (!changed) return;
     if (this.isPlaying && this.activeTrackId) {
       // Re-arrancar el motor correcto sin cambiar la canción activa
       const t = this.currentTime;
