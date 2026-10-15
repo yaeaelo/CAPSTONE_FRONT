@@ -1,5 +1,7 @@
 from django.contrib.auth import views as auth_views
-from django.urls import path
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from .views import TrackViewSet, BeatViewSet
 
 from .views import (
     inicio, logout, registro, activar_cuenta, perfil_artista, perfil_productor, perfil,
@@ -11,6 +13,10 @@ from .views import (
     ingresar_suscripcion_view, editar_track, eliminar_track, realizar_pago,
     cancelar_pago_pendiente, eliminar_cuenta, confirmar_eliminacion_cuenta, sobre_nosotros,
 )
+
+router = DefaultRouter()
+router.register(r'beats', BeatViewSet, basename='beat')
+router.register(r'tracks', TrackViewSet, basename='track')
 
 urlpatterns = [
     path('', inicio, name='inicio'),
@@ -30,19 +36,13 @@ urlpatterns = [
     path('perfil_artista/<str:username>/', perfil_artista1, name='perfil_artista1'),
     path('perfil_productor/<str:username>/', perfil_productor1, name='perfil_productor1'),
     path('detalle/<int:track_id>/', detalle_track, name='detalle'),
+    
+    # Rutas API DRF
+    path('', include(router.urls)),
 
-    # Reproducción del audio a través de Django.
-    path(
-        'track/<int:track_id>/reproducir/',
-        reproducir_track,
-        name='reproducir_track'
-    ),
-    path(
-        'track/<int:track_id>/preview/',
-        reproducir_preview_track,
-        name='reproducir_preview_track'
-    ),
-
+    # Reproduccion de audio
+    path('track/<int:track_id>/reproducir/', reproducir_track, name='reproducir_track'),
+    path('track/<int:track_id>/preview/', reproducir_preview_track, name='reproducir_preview_track'),
     path('detalle/<int:track_id>/descargar/', descargar_track, name='descargar_track'),
     path('agregar_comentario/<int:track_id>/', agregar_comentario, name='agregar_comentario'),
     path('comentario/eliminar/<int:comentario_id>/', eliminar_comentario, name='eliminar_comentario'),
@@ -51,7 +51,7 @@ urlpatterns = [
     path('carrito/eliminar/<int:venta_id>/', eliminar_del_carrito, name='eliminar_del_carrito'),
     path('dar_like/<int:track_id>/', dar_like, name='dar_like'),
 
-    # Recuperación segura de contraseña por correo + token de un solo uso.
+    # Recuperacion de contrasena
     path('recuperar/', recuperar_contrasena, name='recuperar_contrasena'),
     path('recuperar/enviado/', auth_views.PasswordResetDoneView.as_view(
         template_name='app/password_reset_done.html'
@@ -67,11 +67,7 @@ urlpatterns = [
 
     path('eliminar-del-carrito/<int:venta_id>/', eliminar_del_carrito, name='eliminar_del_carrito'),
     path('pago/', pago, name='pago'),
-    path(
-        'pago/cancelar/<int:transaction_id>/',
-        cancelar_pago_pendiente,
-        name='cancelar_pago_pendiente'
-    ),
+    path('pago/cancelar/<int:transaction_id>/', cancelar_pago_pendiente, name='cancelar_pago_pendiente'),
     path('pago/cancelado/', cancelado, name='cancelado'),
     path('pago/exito/', exito, name='exito'),
     path('pago/exito-carrito/', exito_carrito, name='exito_carrito'),
@@ -79,9 +75,6 @@ urlpatterns = [
     path('ingresar-suscripcion/', ingresar_suscripcion_view, name='ingresar_suscripcion'),
     path('editar_track/<int:track_id>/', editar_track, name='editar_track'),
     path('eliminar_track/<int:track_id>/', eliminar_track, name='eliminar_track'),
-    path('suscripcion/<int:suscripcion_id>/', realizar_pago, name='realizar_pago'),
+    path('suscripcion/<int:suscripion_id>/', realizar_pago, name='realizar_pago'),
     path('sobre_nosotros/', sobre_nosotros, name='sobre_nosotros'),
 ]
-
-
-

@@ -58,7 +58,9 @@ from django.urls import reverse
 from .models import Usuario, Venta, HistorialCompra, Compra
 import random
 from django.db import transaction
-from .models import WebpayTransaction
+from .models import WebpayTransaction, Track
+from rest_framework import viewsets, permissions
+from .serializers import TrackSerializer, BeatSerializer
 
 import uuid
 import mimetypes
@@ -67,6 +69,12 @@ from .audio_utils import generar_preview_audio
 
 ANON_USER_USERNAME = 'UsuarioAnonimo'
 
+class TrackViewSet(viewsets.ModelViewSet):
+    queryset = Track.objects.all().order_by('-id_track')
+    serializer_class = TrackSerializer
+    permission_classes = [permissions.AllowAny]
+
+BeatViewSet = TrackViewSet
 
 def _obtener_perfil_anonimo():
     """Perfil técnico para conservar contenido comprado de cuentas eliminadas."""
