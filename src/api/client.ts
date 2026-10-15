@@ -1,10 +1,9 @@
 /**
  * client.ts — Capa de acceso al backend Django de Felipe.
  *
- * MODO ACTUAL: los endpoints /api/* NO existen todavía en su repo (monolito con
- * templates). Este cliente está escrito contra la Fase B propuesta en
- * docs/INTEGRACION_BACKEND.md §3-B. Mientras tanto, AppContext usa `isApiEnabled()
- * === false` y sigue con el mock de localStorage, por lo que nada de esto rompe la demo.
+ * Los endpoints /api/* los provee app/api_shim.py del backend (BeatsCloud). Este cliente solo se
+ * usa con VITE_API_MODE=rest; con 'mock' (default) AppContext sigue con localStorage.
+ * OJO: AppContext aún NO consume este cliente (pendiente "Fase 2" de docs/INTEGRACION_BACKEND.md).
  *
  * Convenciones heredadas del backend real (verificadas en app/views.py):
  *  - Sesión por cookie de Django -> fetch con credentials:'include'.
@@ -17,7 +16,10 @@ import type {
   DHistorialCompra, DHistorialVenta, DComentario, DSuscripcion,
 } from './types';
 
-const BASE = ((import.meta as any).env?.VITE_DJANGO_URL || 'http://localhost:8000').replace(/\/$/, '');
+// Por defecto '' = mismo origen: en desarrollo Vite hace proxy de /api, /media, /track y /pago hacia
+// Django (ver vite.config.ts), así cookies de sesión y CSRF funcionan sin CORS. Para apuntar
+// directo a otro host (requiere CORS + CSRF_TRUSTED_ORIGINS en Django) define VITE_DJANGO_URL.
+const BASE = (((import.meta as any).env?.VITE_DJANGO_URL as string | undefined) ?? '').replace(/\/$/, '');
 export const API_MODE = ((import.meta as any).env?.VITE_API_MODE || 'mock') as 'mock' | 'rest';
 
 /** La UI pregunta esto para decidir si hidrata desde red o desde localStorage. */
@@ -38,8 +40,26 @@ async function refreshCsrf(): Promise<void> {
   if (m) csrfToken = m[1];
 }
 
-async function http<T>(path: string, init: RequestInit = {}): Promise<T> {
-  if (!csrfToken && init.method && init.method !== 'GET') await refreshCsrf();
+/** Error de la API: conserva el status HTTP y el mensaje `detail` que envía Django. */
+export class ApiError extends Error {
+  constructor(public status: number, public path: string, public detail: string, public errors?: Record<string, string[]>) {
+    super(detail || `[${status}] ${path}`);
+    this.name = 'ApiError';
+  }
+}
+
+function parseErrorBody(text: string): { detail: string; errors?: Record<string, string[]> } {
+  try {
+    const j = JSON.parse(text);
+    return { detail: typeof j?.detail === 'string' ? j.detail : '', errors: j?.errors };
+  } catch {
+    return { detail: '' };
+  }
+}
+
+async function http<T>(path: string, init: RequestInit = {}, retried = false): Promise<T> {
+  const method = (init.method || 'GET').toUpperCase();
+  if (!csrfToken && method !== 'GET') await refreshCsrf();
   const res = await fetch(`${BASE}${path}`, {
     credentials: 'include',
     ...init,
@@ -50,10 +70,18 @@ async function http<T>(path: string, init: RequestInit = {}): Promise<T> {
       ...init.headers,
     },
   });
-  if (res.status === 403) { await refreshCsrf(); return http<T>(path, init); } // reintentar 1x con token fresco
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    throw new Error(`[${res.status}] ${path}: ${body.slice(0, 300)}`);
+    // Django responde 403 HTML ("CSRF verification failed") si el token venció (p. ej. tras login/logout,
+    // que rotan el token). Se reintenta UNA sola vez; cualquier otro 403 (cuenta sin activar, track
+    // ajeno, audio sin comprar) es un error legítimo y NO se reintenta.
+    if (res.status === 403 && !retried && method !== 'GET' && /csrf/i.test(body)) {
+      csrfToken = '';
+      await refreshCsrf();
+      return http<T>(path, init, true);
+    }
+    const parsed = parseErrorBody(body);
+    throw new ApiError(res.status, path, parsed.detail, parsed.errors);
   }
   return res.json() as Promise<T>;
 }
@@ -78,9 +106,17 @@ export const addComment = (id: number, contenido: string) =>
 
 // ---------- Auth (sesión Django + correo de activación ya implementado por Felipe) ----------
 export const getSession = () => http<DUser | null>('/api/session/');
-export const login = (username: string, password: string) =>
-  http<DUser>('/api/auth/login/', { method: 'POST', body: JSON.stringify({ username, password }) });
-export const logout = () => http<{ ok: boolean }>('/api/auth/logout/', { method: 'POST' });
+// Django rota el token CSRF al iniciar/cerrar sesión: se descarta el cacheado para pedir uno nuevo.
+export const login = async (username: string, password: string) => {
+  const user = await http<DUser>('/api/auth/login/', { method: 'POST', body: JSON.stringify({ username, password }) });
+  csrfToken = '';
+  return user;
+};
+export const logout = async () => {
+  const r = await http<{ ok: boolean }>('/api/auth/logout/', { method: 'POST' });
+  csrfToken = '';
+  return r;
+};
 export const register = (data: FormData) => http<{ detail: string }>('/api/auth/registro/', { method: 'POST', body: data });
 
 // ---------- Carrito (tabla Venta, completada=False) ----------
@@ -95,7 +131,24 @@ export const removeFromCart = (ventaId: number) => http<{ ok: boolean }>(`/api/c
 // ---------- Pagos Webpay Plus ----------
 /** POST /api/pago/ -> tx.create(buy_order, session_id, amount, return_url). Devuelve url_webpay. */
 export const startPago = () => http<DPagoInit>('/api/pago/', { method: 'POST' });
-/** Redirigir el navegador: window.location.href = init.url_webpay (Webpay hace POST-back a /pago/exito-carrito/). */
+/**
+ * Lleva al usuario a Webpay. Transbank exige un FORMULARIO POST con `token_ws` hacia `url_webpay`
+ * (igual que app/templates/app/pago.html); asignar window.location.href enviaría un GET sin token.
+ * Al terminar, Webpay vuelve por POST a /pago/exito-carrito/ (o /pago/exito/ en suscripciones), vistas HTML de Django.
+ */
+export function redirectToWebpay(init: Pick<DPagoInit, 'url_webpay' | 'token_ws'>): void {
+  const form = document.createElement('form');
+  form.method = 'POST';
+  form.action = init.url_webpay;
+  form.style.display = 'none';
+  const input = document.createElement('input');
+  input.type = 'hidden';
+  input.name = 'token_ws';
+  input.value = init.token_ws;
+  form.appendChild(input);
+  document.body.appendChild(form);
+  form.submit();
+}
 export const cancelPendingPago = (transactionId: number) =>
   http<{ ok: boolean }>(`/api/pago/cancelar/${transactionId}/`, { method: 'POST' });
 

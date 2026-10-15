@@ -8,7 +8,7 @@
 import type { Track, User, UserType, MusicGenre, SaleRecord, PurchaseRecord } from '../types';
 import type { DTrack, DUser, DVenta, DHistorialVenta, DHistorialCompra, DComentario } from './types';
 
-const DJANGO_BASE = (import.meta as any).env?.VITE_DJANGO_URL || 'http://localhost:8000';
+const DJANGO_BASE: string = (((import.meta as any).env?.VITE_DJANGO_URL as string | undefined) ?? '').replace(/\/$/, ''); // '' = mismo origen (proxy de Vite)
 
 /** Rutas protegidas confirmadas en app/urls.py — el <audio> apunta aquí, no a /media/. */
 export const audioFullUrl = (idTrack: number) => `${DJANGO_BASE}/track/${idTrack}/reproducir/`;

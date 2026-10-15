@@ -26,6 +26,8 @@ export interface DUser {
   spotify: string | null;
   youtube: string | null;
   instagram: string | null;
+  /** Solo en login/sesión del propio usuario (nunca en payloads públicos, donde email viene vacío). */
+  liked_track_ids?: number[];
 }
 
 /** app.models.Genero_Musical — 9 choices declarados */
@@ -45,7 +47,9 @@ export interface DTrack {
   foto: string | null;
   genero: DGenero;
   usuario: DUser;            // productor dueño
-  likes_count?: number;      // tracks_gustados.count() (agregar en serializer Fase B)
+  likes_count?: number;      // tracks_gustados.count()
+  is_purchased?: boolean;    // el usuario autenticado ya lo compró
+  is_owner?: boolean;        // el usuario autenticado es el productor
   // Metadatos propuestos (migración 0016_track_metadata, ver docs/INTEGRACION_BACKEND.md §3-C)
   resource_type?: 'instrumental' | 'acapella' | 'loop' | 'drumkit';
   bpm?: number;
@@ -132,4 +136,5 @@ export interface DSuscripcion {
   detalle: string;
   precio: number;
   user: DUser;
+  is_subscribed?: boolean;
 }
